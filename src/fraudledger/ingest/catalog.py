@@ -35,7 +35,7 @@ KNOWN_SOURCES: tuple[KnownSource, ...] = (
         "Medicaid Provider Spending",
         "HHS T-MSIS extract: billing NPI, HCPCS, and month. This is the file the rules score.",
         MEDICAID_PAGE,
-        "Multi-gigabyte. The CSV zip is about 3.5 GB; the pull prefers Parquet.",
+        "Multi-gigabyte download. The working set keeps hospice, home health, and personal-care procedure codes and drops the rest.",
     ),
     KnownSource(
         "leie",

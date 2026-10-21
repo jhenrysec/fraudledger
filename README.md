@@ -1,6 +1,6 @@
 # Fraud Ledger
 
-Local review workstation for public healthcare billing anomalies. It loads public extracts, scores peer deviations, and writes a hashed evidence bundle. It does not decide that anyone committed fraud, and it does not submit a tip.
+Local review workstation for public healthcare billing anomalies. It loads public extracts, scores peer deviations, and writes a report packet you can file yourself. It does not decide that anyone committed fraud, and it does not submit a tip.
 
 Statistical flags are review leads, not findings of fraud. Excess dollars are a gap versus a peer median, not a loss amount and not a recoverable amount. A person decides whether any lead is worth sending to [america.gov/fraud](https://america.gov/fraud). The Department of Justice Criminal Tip Rewards Pilot is discretionary. This program does not compute a reward.
 
@@ -16,21 +16,21 @@ cd fraudledger
 bash install.sh
 ```
 
-That uses sudo once. It installs Python packages into `/opt/fraudledger/venv`, creates a `fraudledger` system user, writes `/etc/fraudledger/config.yaml` if it is missing, loads a fictional demonstration set, and starts a systemd service. Then open `http://127.0.0.1:8088/` in the desktop browser. Wayland versus X11 does not matter; this is a local web page.
+That uses sudo once. It installs Python packages into `/opt/fraudledger/venv`, creates a `fraudledger` system user, writes `/etc/fraudledger/config.yaml` if it is missing, and starts a systemd service. It does not load fictional data. Open `http://127.0.0.1:8088/sources` and choose **Load the public working set**. Wayland versus X11 does not matter; this is a local web page.
 
 Ubuntu 26.04 Desktop's default Python is 3.14. The installer uses that interpreter and installs a DuckDB build that already has a 3.14 wheel, so it does not compile a database engine on the machine.
 
 ```bash
 bash install.sh --user       # virtualenv in this clone, no systemd
-bash install.sh --no-demo    # do not load fictional NPIs
+bash install.sh --demo       # also load fictional NPIs; not for a report
 bash install.sh --no-start   # install services but do not start the UI
 ```
 
-The demonstration set, the LEIE, and the hospice or home-health owner files are comfortable on one desktop. The national Medicaid extract is multi-gigabyte. Give that pull a large free disk (hundreds of GB if you keep the raw file and the Parquet) and at least 16 GB of RAM. A smaller desktop can still run the demonstration and the smaller public files.
+The public working set is the real review path. It loads the OIG exclusion list, hospice and home-health enrollments and owners, NPPES when the CMS index is online, and the Medicaid Provider Spending extract. Only hospice, home health, and personal-care procedure codes are written into the warehouse. The download is still the full multi-gigabyte extract, so leave a large free disk and at least 16 GB of RAM. A smaller machine can load the LEIE and the owner files, or `bash install.sh --demo` for the fictional fixture.
 
 The `--user` command wires `.venv/bin/fraudledger` at this clone's `var/config.yaml`. The system command uses `/etc/fraudledger/config.yaml` and does not depend on the clone staying on disk.
 
-Re-running the installer does not overwrite an existing config file. Demonstration rows use fictional NPIs in the `199999xxxx` range. `fraudledger ingest medicaid --drop-demo` removes them when a real extract is loaded.
+Re-running the installer does not overwrite an existing config file. Demonstration rows, if you loaded them with `--demo`, use fictional NPIs in the `199999xxxx` range. The public working set removes them. A report packet is refused while a run is demonstration-only.
 
 ## What a run stores
 
@@ -61,13 +61,19 @@ fraudledger serve
 fraudledger sources
 fraudledger pull leie
 fraudledger pull hospice
-fraudledger pull medicaid --drop-demo
+fraudledger pull --working
+fraudledger pull medicaid --drop-demo --focus priority
 fraudledger pull --url "$FILE_URL" --as medicaid --drop-demo
 fraudledger pull --all
 fraudledger refresh
+fraudledger report 1234567890 --run 20261021T120000Z
 ```
 
-`fraudledger sources` lists the known public files. `pull` looks up the current download for that file. `pull --url` uses an address you paste, and `--as` says how to read it (`medicaid`, `leie`, `nppes`, `hospice-owners`, `hospice-enrollments`, `home-health-owners`, `home-health-enrollments`). The same two choices are on the Sources page at `http://127.0.0.1:8088/sources`.
+`fraudledger pull --working` is the same action as **Load the public working set** on the Sources page. It removes demonstration rows when the Medicaid file loads.
+
+`fraudledger report` writes `exports/<run>-<provider>.zip` with `narrative.txt`, `evidence.csv`, `indicators.csv`, `how-to-submit.txt`, and `report.pdf`. You attach the PDF yourself at [america.gov/fraud](https://america.gov/fraud). The command does not contact the government. Do not type the peer-gap figure into the form as money taken.
+
+`fraudledger sources` lists the known public files. `pull` looks up the current download for that file. `pull --url` uses an address you paste, and `--as` says how to read it (`medicaid`, `leie`, `nppes`, `hospice-owners`, `hospice-enrollments`, `home-health-owners`, `home-health-enrollments`). `--focus priority` keeps hospice, home health, and personal-care procedure codes from a Medicaid file. The same choices are on the Sources page at `http://127.0.0.1:8088/sources`.
 
 Hospice and home health pulls also load the matching enrollment file. The owner extract is keyed by enrollment id; the enrollment extract supplies the NPI, which is what the billing rows use.
 
@@ -75,7 +81,7 @@ Hospice and home health pulls also load the matching enrollment file. The owner 
 
 `pull --all` fetches every known source, including the multi-gigabyte Medicaid extract. It is not what the timer runs.
 
-`export-tip` only zips the evidence package. It does not contact the government.
+`export-tip` zips the whole run for your notes. `report` is the per-provider packet. Neither contacts the government.
 
 ## Public sources
 
@@ -89,9 +95,9 @@ Set these in `/etc/fraudledger/config.yaml` only when you want `refresh` to use 
 | Hospice owners and enrollments | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/hospice-all-owners |
 | Home health owners and enrollments | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/home-health-agency-all-owners |
 
-v1 scores hospice and home-health patterns that show up in the Medicaid spending extract, plus an NPI match to the LEIE. Owner linking uses the CMS associate id only. A shared address is an extra edge when at least three providers use the same street, city, and state. Name-only LEIE matches are not flags.
+v1 scores hospice, home health, and personal-care procedure codes in the Medicaid spending extract, plus an NPI match to the LEIE. The public working set does not keep the rest of the national extract. Owner linking uses the CMS associate id only. A shared address is an extra edge when at least three providers use the same street, city, and state. Name-only LEIE matches are not flags.
 
-The national Medicaid extract is on the order of 227 million rows. Do not open it in pandas. The loader streams CSV into partitioned Parquet through DuckDB. Plan on a large disk (the build notes use 500 GB) before pointing `medicaid_url` at the full file. A laptop can run the demonstration set.
+The national Medicaid extract is on the order of 227 million rows. Do not open it in pandas. The loader streams it through DuckDB and writes only the priority procedure codes. The raw download is still stored, so plan on tens of gigabytes of disk before starting the working set.
 
 ## Rules
 

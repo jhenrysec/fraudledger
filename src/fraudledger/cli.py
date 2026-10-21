@@ -75,7 +75,14 @@ def _cmd_demo(args: argparse.Namespace) -> int:
 def _cmd_ingest(args: argparse.Namespace) -> int:
     settings, con = _open(args)
     if args.source == "medicaid":
-        count = ingest_medicaid(con, settings, path=args.path, url=args.url, drop_demo=args.drop_demo)
+        count = ingest_medicaid(
+            con,
+            settings,
+            path=args.path,
+            url=args.url,
+            drop_demo=args.drop_demo,
+            focus=args.focus,
+        )
         print(f"Medicaid facts files in view: {count}")
     elif args.source == "leie":
         count = ingest_leie(con, settings, path=args.path, url=args.url)
@@ -149,16 +156,27 @@ def _cmd_sources(_args: argparse.Namespace) -> int:
 
 def _cmd_pull(args: argparse.Namespace) -> int:
     from fraudledger.ingest.catalog import KNOWN_SOURCES
-    from fraudledger.ingest.pull import pull
+    from fraudledger.ingest.pull import pull, pull_working
 
     settings, con = _open(args)
     keys = [item.key for item in KNOWN_SOURCES]
     try:
+        if args.working and (args.url or args.all or args.source):
+            raise SystemExit("`--working` is the whole public set. Do not combine it with a source, --url, or --all.")
         if args.url:
             if not args.as_kind:
                 raise SystemExit("Pass --as with --url so the file can be read as the right kind.")
-            message = pull(con, settings, args.as_kind, url=args.url, drop_demo=args.drop_demo)
+            message = pull(
+                con,
+                settings,
+                args.as_kind,
+                url=args.url,
+                drop_demo=args.drop_demo,
+                focus=args.focus if args.as_kind == "medicaid" else None,
+            )
             print(message)
+        elif args.working:
+            print(pull_working(con, settings))
         elif args.all:
             messages = []
             for key in keys:
@@ -168,7 +186,7 @@ def _cmd_pull(args: argparse.Namespace) -> int:
         elif args.source:
             if args.source not in keys:
                 raise SystemExit(f"Unknown source {args.source}. Try: {', '.join(keys)}")
-            message = pull(con, settings, args.source, drop_demo=args.drop_demo)
+            message = pull(con, settings, args.source, drop_demo=args.drop_demo, focus=args.focus)
             print(message)
         else:
             raise SystemExit("Pass a source name, --url, or --all. See `fraudledger sources`.")
@@ -237,6 +255,39 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    from fraudledger.report.packet import build_packet
+
+    settings, con = _open(args)
+    try:
+        run_id = args.run_id
+        if not run_id:
+            row = con.execute(
+                """
+                SELECT run_id FROM runs
+                WHERE status = 'succeeded' AND NOT demo_only
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                raise SystemExit("No succeeded public run. Load the public working set first.")
+            run_id = row[0]
+        dest = build_packet(con, settings, run_id, args.provider_key)
+        set_review(
+            con,
+            args.provider_key,
+            "exported",
+            "Report packet saved on this machine. It was not submitted.",
+        )
+    finally:
+        con.close()
+    print(dest)
+    print("This packet was not submitted. If you send it, use https://america.gov/fraud")
+    print("The Criminal Tip Rewards Pilot is discretionary. This tool does not compute a reward.")
+    return 0
+
+
 def _cmd_review(args: argparse.Namespace) -> int:
     settings, con = _open(args)
     set_review(con, args.provider_key, args.state, args.note or "")
@@ -280,6 +331,11 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Remove fictional demonstration facts before publishing this extract into the view.",
             )
+            command.add_argument(
+                "--focus",
+                choices=["priority"],
+                help="Keep hospice, home health, and personal-care procedure codes. The download is still the full extract.",
+            )
         if name == "ownership":
             command.add_argument("--kind", default="ownership", help="Label stored on the edge origin.")
 
@@ -309,7 +365,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="How to read --url.",
     )
     pull.add_argument("--all", action="store_true", help="Pull every known source. The Medicaid file is multi-gigabyte.")
+    pull.add_argument("--working", action="store_true", help="Load LEIE, hospice, home health, NPPES if the index is up, and priority Medicaid codes. Removes demonstration rows.")
     pull.add_argument("--drop-demo", action="store_true", help="Remove fictional rows when loading Medicaid.")
+    pull.add_argument(
+        "--focus",
+        choices=["priority"],
+        help="With a Medicaid pull, keep hospice, home health, and personal-care procedure codes.",
+    )
     pull.add_argument("--no-run", action="store_true", help="Load files without scoring them.")
     pull.set_defaults(func=_cmd_pull)
 
@@ -326,6 +388,11 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("run_id")
     export.add_argument("--out")
     export.set_defaults(func=_cmd_export)
+
+    report = sub.add_parser("report", help="Write one provider's report packet. Does not submit it.")
+    report.add_argument("provider_key")
+    report.add_argument("--run", dest="run_id")
+    report.set_defaults(func=_cmd_report)
 
     review = sub.add_parser("review", help="Set a review state. Dismissal does not delete flags.")
     review.add_argument("provider_key")

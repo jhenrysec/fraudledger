@@ -2,15 +2,24 @@
 {% block title %}Sources · Fraud Ledger{% endblock %}
 {% block body %}
 <h1>Public sources</h1>
-<p class="sub">Pull a known file, or paste your own http(s) URL. Nothing here submits a tip. A multi-gigabyte Medicaid pull can take a long time and the rest of the UI waits while that file is loading.</p>
+<p class="sub">Pull the public working set, a known file, or your own http(s) URL. Nothing here submits a tip. A Medicaid pull downloads the full extract and the rest of the UI waits while that file is loading.</p>
 {% if running %}
 <meta http-equiv="refresh" content="5">
-<p class="banner" style="margin:0 0 16px;">Pull in progress. This page refreshes every few seconds. {{ message }}</p>
+<p class="banner" style="margin:0 0 16px; white-space:pre-wrap;">Pull in progress. This page refreshes every few seconds. {{ message }}</p>
 {% elif error %}
-<p class="card" style="border-left:4px solid var(--critical);">The last pull stopped. {{ error }}</p>
+<p class="card" style="border-left:4px solid var(--critical); white-space:pre-wrap;">The last pull stopped. {{ error }}</p>
 {% elif message %}
-<p class="card" style="border-left:4px solid var(--teal);">{{ message }}</p>
+<p class="card" style="border-left:4px solid var(--teal); white-space:pre-wrap;">{{ message }}</p>
 {% endif %}
+
+<section class="card">
+  <h2>Public working set</h2>
+  <p>This is the path that scores real billing. It loads the OIG exclusion list, hospice enrollments and owners, home-health enrollments and owners, and NPPES when the CMS index is online. It then loads Medicaid and keeps hospice, home health, and personal-care procedure codes, removes fictional demonstration rows, and scores what loaded. The Medicaid file itself is still multi-gigabyte.</p>
+  <form method="post" action="/sources">
+    <input type="hidden" name="mode" value="working">
+    <button type="submit" {% if running %}disabled{% endif %}>Load the public working set</button>
+  </form>
+</section>
 
 <div class="grid">
   <section class="card">
@@ -27,6 +36,12 @@
         <input type="checkbox" name="drop_demo" value="1" {% if source.key == 'medicaid' %}checked{% endif %}>
         Remove fictional demonstration rows
       </label>
+      {% if source.key == 'medicaid' %}
+      <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:6px;">
+        <input type="checkbox" name="focus" value="priority" checked>
+        Keep hospice, home health, and personal-care procedure codes only
+      </label>
+      {% endif %}
       <label style="display:flex; gap:8px; align-items:center; color:inherit; margin:6px 0 10px;">
         <input type="checkbox" name="run_after" value="1" checked>
         Score after the file loads
@@ -51,6 +66,10 @@
       <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:10px;">
         <input type="checkbox" name="drop_demo" value="1">
         Remove fictional demonstration rows
+      </label>
+      <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:6px;">
+        <input type="checkbox" name="focus" value="priority">
+        If this is a Medicaid file, keep hospice, home health, and personal-care codes only
       </label>
       <label style="display:flex; gap:8px; align-items:center; color:inherit; margin:6px 0 10px;">
         <input type="checkbox" name="run_after" value="1" checked>

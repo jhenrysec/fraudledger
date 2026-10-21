@@ -367,6 +367,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
         return FileResponse(path, filename=path.name, media_type="application/zip")
 
+    @app.get("/report/{provider_key}")
+    def report_packet(provider_key: str, run: str | None = None):
+        if not PROVIDER_KEY.match(provider_key):
+            raise HTTPException(400, "Unrecognized provider key")
+        from fraudledger.report.packet import build_packet
+
+        def write(connection):
+            run_row = resolve_run(connection, run)
+            try:
+                path = build_packet(connection, settings, run_row[0], provider_key)
+                set_review(
+                    connection,
+                    provider_key,
+                    "exported",
+                    "Report packet saved on this machine. It was not submitted.",
+                )
+            except SystemExit as exc:
+                text = str(exc)
+                lowered = text.lower()
+                if "demonstration" in lowered:
+                    status = 409
+                elif "not in this run" in lowered or "no run" in lowered:
+                    status = 404
+                else:
+                    status = 400
+                raise HTTPException(status, text) from exc
+            return path
+
+        path = call(write)
+        return FileResponse(path, filename=path.name, media_type="application/zip")
+
     status_path = settings.data_dir / "logs" / "pull_status.json"
 
     def read_status() -> dict:
@@ -430,9 +461,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         as_kind: str = Form(""),
         drop_demo: str = Form(""),
         run_after: str = Form(""),
+        focus: str = Form(""),
     ):
         from fraudledger.ingest.catalog import CUSTOM_KINDS, KNOWN_SOURCES, validate_http_url
-        from fraudledger.ingest.pull import pull
+        from fraudledger.ingest.pull import pull, pull_working
         from fraudledger.pipeline import execute_run
 
         if read_status().get("running"):
@@ -440,8 +472,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         known = {item.key for item in KNOWN_SOURCES}
         kinds = {item[0] for item in CUSTOM_KINDS}
         remove_demo = drop_demo == "1"
-        score = run_after == "1"
-        if mode == "url":
+        score = run_after == "1" or mode == "working"
+        chosen_focus = "priority" if focus == "priority" else None
+        if mode == "working":
+            target_key = "working"
+            target_url = None
+        elif mode == "url":
             try:
                 chosen = validate_http_url(url)
             except SystemExit as exc:
@@ -465,13 +501,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 with _LOCK:
                     connection = db()
-                    text = pull(
-                        connection,
-                        settings,
-                        target_key,
-                        url=target_url,
-                        drop_demo=remove_demo,
-                    )
+                    if target_key == "working":
+                        text = pull_working(connection, settings)
+                    else:
+                        text = pull(
+                            connection,
+                            settings,
+                            target_key,
+                            url=target_url,
+                            drop_demo=remove_demo,
+                            focus=chosen_focus if target_key == "medicaid" else None,
+                        )
                     if score:
                         facts = connection.execute("SELECT COUNT(*) FROM facts_medicaid").fetchone()[0]
                         if facts:

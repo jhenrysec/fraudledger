@@ -231,6 +231,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn("1999990001", page.text)
             self.assertIn("Demonstration data", page.text)
+            self.assertIn("demonstration data", page.text.lower())
+            denied = client.get("/report/1999990001?run=API")
+            self.assertEqual(denied.status_code, 409)
             self.assertNotIn("fraudster", page.text.lower())
             missing = client.get("/provider/not a key")
             self.assertEqual(missing.status_code, 400)
@@ -247,6 +250,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn("Your own URL", page.text)
             self.assertIn("Medicaid Provider Spending", page.text)
+            self.assertIn("Public working set", page.text)
             rejected = client.post(
                 "/sources",
                 data={"mode": "url", "url": "ftp://example.com/file.csv", "as_kind": "leie"},
@@ -335,6 +339,52 @@ class CatalogTests(unittest.TestCase):
                 for row in con.execute("SELECT provider_key FROM ownership_edges ORDER BY 1").fetchall()
             }
             self.assertEqual(keys, {"1999990010", "1999990011"})
+            con.close()
+
+
+class PublicReportTests(unittest.TestCase):
+    def test_priority_focus_and_report_packet(self) -> None:
+        import zipfile
+
+        from fraudledger.ingest.public import ingest_medicaid
+        from fraudledger.report.packet import build_packet
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            con = connect(settings.db_path)
+            load_demo(con, settings)
+            execute_run(con, settings, run_id="DEMO")
+            with self.assertRaises(SystemExit) as caught:
+                build_packet(con, settings, "DEMO", "1999990001")
+            self.assertIn("demonstration", str(caught.exception).lower())
+
+            path = Path(tmp) / "spend.csv"
+            path.write_text(
+                "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES,TOTAL_UNIQUE_BENEFICIARIES\n"
+                "1234567893,T2042,2024-01-01,100,2,1\n"
+                "1234567893,99213,2024-01-01,50,1,1\n",
+                encoding="utf-8",
+            )
+            ingest_medicaid(con, settings, path=str(path), drop_demo=True, focus="priority")
+            codes = {row[0] for row in con.execute("SELECT hcpcs FROM facts_medicaid").fetchall()}
+            self.assertEqual(codes, {"T2042"})
+            execute_run(con, settings, run_id="PUBLIC")
+            dest = build_packet(con, settings, "PUBLIC", "1234567893")
+            with zipfile.ZipFile(dest) as archive:
+                names = set(archive.namelist())
+                narrative = archive.read("narrative.txt").decode("utf-8")
+                submit = archive.read("how-to-submit.txt").decode("utf-8")
+            self.assertEqual(
+                names,
+                {"narrative.txt", "evidence.csv", "indicators.csv", "how-to-submit.txt", "report.pdf"},
+            )
+            self.assertIn("1234567893", narrative)
+            self.assertIn("https://america.gov/fraud", narrative)
+            self.assertIn("does not contact", submit.lower())
+            blob = (narrative + submit).lower()
+            for phrase in BANNED:
+                self.assertNotIn(phrase, blob)
             con.close()
 
 

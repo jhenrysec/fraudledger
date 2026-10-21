@@ -20,6 +20,7 @@ def pull(
     key: str,
     url: str | None = None,
     drop_demo: bool = False,
+    focus: str | None = None,
 ) -> str:
     """Load one known source, or one custom URL already tagged with a file kind."""
     if key in PAIRS:
@@ -36,8 +37,11 @@ def pull(
         )
     if key == "medicaid":
         chosen = resolve_file_url(settings, "medicaid", url)
-        count = ingest_medicaid(con, settings, url=chosen, drop_demo=drop_demo)
-        return f"Medicaid facts files in view: {count}. Source {chosen}"
+        count = ingest_medicaid(con, settings, url=chosen, drop_demo=drop_demo, focus=focus)
+        kept = ""
+        if focus == "priority":
+            kept = " Kept hospice, home health, and personal-care procedure codes."
+        return f"Medicaid facts files in view: {count}. Source {chosen}.{kept}"
     if key == "leie":
         chosen = resolve_file_url(settings, "leie", url)
         count = ingest_leie(con, settings, url=chosen)
@@ -55,3 +59,21 @@ def pull(
         count = ingest_enrollments(con, settings, url=chosen, kind=key)
         return f"Enrollment rows: {count}. Source {chosen}"
     raise SystemExit(f"Unknown source: {key}")
+
+
+def pull_working(con: duckdb.DuckDBPyConnection, settings: Settings) -> str:
+    """LEIE, hospice, home health, optional NPPES, then priority Medicaid codes.
+
+    Demonstration rows are removed when the Medicaid extract loads.
+    """
+    parts = [
+        pull(con, settings, "leie"),
+        pull(con, settings, "hospice"),
+        pull(con, settings, "home-health"),
+    ]
+    try:
+        parts.append(pull(con, settings, "nppes"))
+    except SystemExit as exc:
+        parts.append(f"NPPES skipped: {exc}")
+    parts.append(pull(con, settings, "medicaid", drop_demo=True, focus="priority"))
+    return " ".join(parts)

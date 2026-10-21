@@ -47,6 +47,7 @@ def ingest_medicaid(
     path: str | None = None,
     url: str | None = None,
     drop_demo: bool = False,
+    focus: str | None = None,
 ) -> int:
     settings.ensure_dirs()
     source, locator = _input_path(settings, path, url, "medicaid")
@@ -69,6 +70,16 @@ def ingest_medicaid(
     beneficiaries = mapping["beneficiaries"]
     servicing_sql = f'"{servicing}"' if servicing else "NULL"
     beneficiaries_sql = f'"{beneficiaries}"' if beneficiaries else "NULL"
+    where = ""
+    if focus == "priority":
+        from fraudledger.ingest.focus import priority_in_list
+
+        where = (
+            f'\nWHERE upper(trim(CAST("{mapping["hcpcs"]}" AS VARCHAR))) '
+            f"IN ({priority_in_list()})"
+        )
+    elif focus:
+        raise SystemExit("Unknown focus. Use priority, or omit it to keep every procedure code.")
     out = settings.data_dir / "parquet" / "facts" / f"medicaid_{digest[:16]}.parquet"
     select = f"""
         SELECT
@@ -80,7 +91,7 @@ def ingest_medicaid(
             CAST("{mapping['claim_lines']}" AS DOUBLE) AS claim_lines,
             CAST("{mapping['paid']}" AS DOUBLE) AS paid,
             'public' AS origin
-        FROM {reader}
+        FROM {reader}{where}
     """
     if readable.suffix.lower() == ".parquet":
         con.execute(f"COPY ({select}) TO {_sql_path(out)} (FORMAT PARQUET)")

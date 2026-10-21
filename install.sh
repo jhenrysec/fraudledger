@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Fraud Ledger installer for one Ubuntu Desktop machine (24.04 or 26.04).
-#   bash install.sh              system install, systemd, demonstration data
+#   bash install.sh              system install, systemd, no demonstration data
 #   bash install.sh --user       virtualenv in this clone, no systemd
-#   bash install.sh --no-demo    skip the fictional fixture
+#   bash install.sh --demo       also load the fictional fixture
 #   bash install.sh --no-start   install but do not start the UI
 set -euo pipefail
 
@@ -34,24 +34,27 @@ if [[ "$want_user" -eq 0 && "$(id -u)" -ne 0 ]]; then
   exec sudo -E env FRAUDLEDGER_INSTALL_REEXEC=1 bash "$ROOT/install.sh" "$@"
 fi
 
-NO_DEMO=0
+NO_DEMO=1
 NO_START=0
 USER_MODE=$want_user
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) USER_MODE=1; shift ;;
+    --demo) NO_DEMO=0; shift ;;
     --no-demo) NO_DEMO=1; shift ;;
     --no-start) NO_START=1; shift ;;
     -h|--help)
       cat <<'EOF'
-Usage: bash install.sh [--user] [--no-demo] [--no-start]
+Usage: bash install.sh [--user] [--demo] [--no-start]
 
 Without flags, on Ubuntu Desktop 24.04 or 26.04, this installs a system
-virtualenv, a local-only systemd service on 127.0.0.1:8088, and the fictional
-demonstration dataset. Open that address in the desktop browser.
+virtualenv and a local-only systemd service on 127.0.0.1:8088. It does not
+load fictional data. Open that address and use Sources to load the public
+working set.
 
   --user      Install into .venv in this clone and start with nohup. No systemd.
-  --no-demo   Do not load fictional NPIs.
+  --demo      Load fictional NPIs in the 199999xxxx range. Not for reporting.
+  --no-demo   Accepted for older notes. This is already the default.
   --no-start  Do not start the review UI.
 EOF
       exit 0
@@ -162,6 +165,7 @@ EOF
   echo "User install finished."
   echo "Command: $ROOT/.venv/bin/fraudledger"
   echo "Config:  $ROOT/var/config.yaml"
+  echo "Next: open the Sources page and load the public working set."
 }
 
 install_system() {
@@ -228,6 +232,7 @@ install_system() {
     wait_health "${bind[0]}" "${bind[1]}"
   fi
   echo "System install finished. Service: fraudledger.service"
+  echo "Next: open the Sources page and load the public working set."
 }
 
 if [[ "$USER_MODE" -eq 1 ]]; then

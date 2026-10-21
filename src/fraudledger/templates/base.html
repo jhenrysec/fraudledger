@@ -108,7 +108,11 @@
     </nav>
   </header>
   {% if demo %}
-  <p class="banner">Demonstration data. Fictional NPIs in the 199999xxxx range. These are not real entities and are not review leads about real providers.</p>
+  <div class="banner">Demonstration data. Fictional NPIs in the 199999xxxx range. These are not real entities.
+    <form method="post" action="/demo/remove" style="display:inline;">
+      <button type="submit">Remove demonstration data</button>
+    </form>
+  </div>
   {% endif %}
   <p class="disclaimer">{{ disclaimer }}</p>
   <main>

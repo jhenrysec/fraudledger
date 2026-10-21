@@ -139,7 +139,14 @@ PY
   if [[ "$NO_DEMO" -eq 0 ]]; then
     FRAUDLEDGER_CONFIG="$ROOT/var/config.yaml" "$ROOT/.venv/bin/fraudledger" demo
   else
-    FRAUDLEDGER_CONFIG="$ROOT/var/config.yaml" "$ROOT/.venv/bin/fraudledger" init
+    if [[ -f "$ROOT/var/fraudledger.pid" ]]; then
+      old="$(cat "$ROOT/var/fraudledger.pid" || true)"
+      if [[ -n "${old}" ]] && kill -0 "$old" 2>/dev/null; then
+        kill "$old" || true
+        sleep 1
+      fi
+    fi
+    FRAUDLEDGER_CONFIG="$ROOT/var/config.yaml" "$ROOT/.venv/bin/fraudledger" drop-demo
   fi
   cat >"$ROOT/.venv/bin/fraudledger" <<EOF
 #!/usr/bin/env bash
@@ -219,11 +226,12 @@ install_system() {
       FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
       /opt/fraudledger/venv/bin/fraudledger demo
   else
+    systemctl stop fraudledger.service || true
     sudo -u fraudledger env \
       HOME=/var/lib/fraudledger \
       XDG_CACHE_HOME=/var/lib/fraudledger/tmp \
       FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
-      /opt/fraudledger/venv/bin/fraudledger init
+      /opt/fraudledger/venv/bin/fraudledger drop-demo
   fi
   if [[ "$NO_START" -eq 0 ]]; then
     systemctl restart fraudledger.service

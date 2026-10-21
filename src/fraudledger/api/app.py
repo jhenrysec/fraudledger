@@ -531,6 +531,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         threading.Thread(target=job, name="fraudledger-pull", daemon=True).start()
         return RedirectResponse("/sources", status_code=303)
 
+    @app.post("/demo/remove")
+    def remove_demo():
+        from fraudledger.ingest.demo import purge_demo
+
+        if read_status().get("running"):
+            raise HTTPException(409, "A pull is running. Wait until it finishes, then remove the demonstration data.")
+
+        def write(connection):
+            purge_demo(connection, settings)
+
+        call(write)
+        return RedirectResponse("/", status_code=303)
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
         if request.url.path == "/health" or "application/json" in request.headers.get("accept", ""):

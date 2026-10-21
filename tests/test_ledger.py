@@ -234,6 +234,11 @@ class ApiTests(unittest.TestCase):
             self.assertIn("demonstration data", page.text.lower())
             denied = client.get("/report/1999990001?run=API")
             self.assertEqual(denied.status_code, 409)
+            removed = client.post("/demo/remove", follow_redirects=False)
+            self.assertEqual(removed.status_code, 303)
+            cleared = client.get("/")
+            self.assertNotIn("1999990001", cleared.text)
+            self.assertNotIn("Demonstration data", cleared.text)
             self.assertNotIn("fraudster", page.text.lower())
             missing = client.get("/provider/not a key")
             self.assertEqual(missing.status_code, 400)
@@ -385,6 +390,40 @@ class PublicReportTests(unittest.TestCase):
             blob = (narrative + submit).lower()
             for phrase in BANNED:
                 self.assertNotIn(phrase, blob)
+            con.close()
+
+    def test_purge_keeps_a_public_row(self) -> None:
+        from fraudledger.ingest.demo import purge_demo
+        from fraudledger.ingest.public import ingest_medicaid
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            con = connect(settings.db_path)
+            load_demo(con, settings)
+            execute_run(con, settings, run_id="DEMO")
+            path = Path(tmp) / "spend.csv"
+            path.write_text(
+                "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+                "1234567893,T2042,2024-01-01,100,2\n",
+                encoding="utf-8",
+            )
+            ingest_medicaid(con, settings, path=str(path))
+            message = purge_demo(con, settings)
+            self.assertIn("Public rows were not deleted", message)
+            self.assertFalse((Path(tmp) / "parquet" / "facts" / "demo.parquet").exists())
+            self.assertEqual(
+                con.execute("SELECT COUNT(*) FROM providers WHERE provider_key LIKE '199999%'").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                con.execute("SELECT COUNT(*) FROM runs WHERE demo_only = TRUE").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                {row[0] for row in con.execute("SELECT hcpcs FROM facts_medicaid").fetchall()},
+                {"T2042"},
+            )
             con.close()
 
 

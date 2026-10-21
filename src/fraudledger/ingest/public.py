@@ -98,12 +98,9 @@ def ingest_medicaid(
     else:
         con.execute(f"COPY ({select}) TO {_sql_path(out)} (FORMAT PARQUET)", [str(readable)])
     if drop_demo:
-        demo = settings.data_dir / "parquet" / "facts" / "demo.parquet"
-        if demo.exists():
-            demo.unlink()
-        con.execute("DELETE FROM providers WHERE origin = 'demo'")
-        con.execute("DELETE FROM leie WHERE origin = 'demo'")
-        con.execute("DELETE FROM ownership_edges WHERE origin = 'demo'")
+        from fraudledger.ingest.demo import purge_demo
+
+        purge_demo(con, settings)
     count_files = refresh_facts_view(con, settings.data_dir / "parquet" / "facts")
     _record_snapshot(con, "medicaid", locator, source, digest, note)
     return count_files

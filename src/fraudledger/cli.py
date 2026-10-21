@@ -72,6 +72,17 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_drop_demo(args: argparse.Namespace) -> int:
+    from fraudledger.ingest.demo import purge_demo
+
+    settings, con = _open(args)
+    try:
+        print(purge_demo(con, settings))
+    finally:
+        con.close()
+    return 0
+
+
 def _cmd_ingest(args: argparse.Namespace) -> int:
     settings, con = _open(args)
     if args.source == "medicaid":
@@ -312,6 +323,8 @@ def build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("demo", help="Load fictional NPIs and, by default, run detection.")
     demo.add_argument("--no-run", action="store_true", help="Load the fixture without scoring it.")
     demo.set_defaults(func=_cmd_demo)
+    drop_demo = sub.add_parser("drop-demo", help="Delete fictional demonstration rows and demonstration runs. Public data stays.")
+    drop_demo.set_defaults(func=_cmd_drop_demo)
 
     ingest = sub.add_parser("ingest", help="Load a public file from disk or a URL.")
     ingest_sub = ingest.add_subparsers(dest="source", required=True)

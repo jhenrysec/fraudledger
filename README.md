@@ -30,7 +30,7 @@ The public working set is the real review path. It loads the OIG exclusion list,
 
 The `--user` command wires `.venv/bin/fraudledger` at this clone's `var/config.yaml`. The system command uses `/etc/fraudledger/config.yaml` and does not depend on the clone staying on disk.
 
-Re-running the installer does not overwrite an existing config file. Demonstration rows, if you loaded them with `--demo`, use fictional NPIs in the `199999xxxx` range. The public working set removes them. A report packet is refused while a run is demonstration-only.
+Re-running the installer does not overwrite an existing config file. Unless you pass `--demo`, it also deletes fictional rows already in the database. `fraudledger drop-demo` does the same thing without reinstalling. Public extracts are kept.
 
 ## What a run stores
 

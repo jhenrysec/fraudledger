@@ -2,7 +2,7 @@
 {% block title %}Sources · Fraud Ledger{% endblock %}
 {% block body %}
 <h1>Public sources</h1>
-<p class="sub">Pull the public working set, a known file, or your own http(s) URL. Nothing here submits a tip. A Medicaid pull downloads the full extract and the rest of the UI waits while that file is loading.</p>
+<p class="sub">Pull the public working set, a known file, or your own http(s) URL. Nothing here submits a tip. Queue and the other pages stay open while a file downloads. They pause only while that file is written into the database.</p>
 {% if running %}
 <meta http-equiv="refresh" content="2">
 <section class="card">

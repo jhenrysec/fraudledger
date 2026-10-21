@@ -127,6 +127,12 @@
       <a href="/runs">Runs</a>
     </nav>
   </header>
+  {% if progress %}
+  <div class="banner">
+    Loading {{ progress.message }}{% if progress.percent is not none %} · {{ progress.percent }}%{% elif progress.received_label %} · {{ progress.received_label }}{% endif %}.
+    <a href="/sources">Watch the load</a>
+  </div>
+  {% endif %}
   {% if demo %}
   <div class="banner">Demonstration data. Fictional NPIs in the 199999xxxx range. These are not real entities.
     <form method="post" action="/demo/remove" style="display:inline;">

@@ -276,6 +276,40 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(rejected.status_code, 400)
 
+    def test_queue_answers_while_the_database_lock_is_held(self) -> None:
+        import threading
+        import time
+
+        from fastapi.testclient import TestClient
+
+        from fraudledger.api.app import _LOCK, create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            release = threading.Event()
+            started = threading.Event()
+
+            def hold() -> None:
+                with _LOCK:
+                    started.set()
+                    release.wait(5)
+
+            thread = threading.Thread(target=hold)
+            thread.start()
+            self.assertTrue(started.wait(2))
+            try:
+                client = TestClient(create_app(settings))
+                began = time.monotonic()
+                page = client.get("/")
+                elapsed = time.monotonic() - began
+            finally:
+                release.set()
+                thread.join(5)
+            self.assertLess(elapsed, 3)
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("database", page.text.lower())
+            self.assertNotIn("fraudster", page.text.lower())
+
 
 class CatalogTests(unittest.TestCase):
     def test_medicaid_prefers_latest_parquet(self) -> None:

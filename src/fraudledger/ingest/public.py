@@ -33,7 +33,7 @@ def _input_path(settings: Settings, path: str | None, url: str | None, label: st
         source = Path(path)
         if not source.is_file():
             raise SystemExit(f"{label} file not found: {source}")
-        return source, path
+        return source, url or str(source)
     if url:
         dest = settings.data_dir / "tmp" / f"{label}.download"
         download(url, dest)

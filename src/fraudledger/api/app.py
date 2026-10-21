@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from contextvars import ContextVar
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -18,6 +19,7 @@ from fraudledger.settings import Settings, load_settings
 
 RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _LOCK = threading.Lock()
+_REQUEST: ContextVar[Request | None] = ContextVar("fraudledger_request", default=None)
 
 
 def _percent(value: object) -> int | None:
@@ -50,18 +52,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
     app = FastAPI(title="Fraud Ledger", version=__version__, docs_url=None, redoc_url=None)
 
+    @app.middleware("http")
+    async def remember_request(request: Request, call_next):
+        token = _REQUEST.set(request)
+        try:
+            return await call_next(request)
+        finally:
+            _REQUEST.reset(token)
+
     def db():
         connection = connect(settings.db_path)
         refresh_facts_view(connection, settings.data_dir / "parquet" / "facts")
         return connection
 
     def call(fn):
-        with _LOCK:
+        request = _REQUEST.get()
+        if not _LOCK.acquire(timeout=1):
+            if request is not None and request.method == "GET":
+                return loading_page(request)
+            raise HTTPException(
+                409,
+                "A file is being written into the database. Try again when that write finishes.",
+            )
+        try:
             connection = db()
             try:
                 return fn(connection)
             finally:
                 connection.close()
+        finally:
+            _LOCK.release()
 
     def latest(connection):
         return connection.execute(
@@ -95,12 +115,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def shell(request: Request, connection, run_row, **extra):
         demo = bool(run_row[1]) if run_row else False
+        if "progress" in extra:
+            progress = extra.pop("progress")
+        else:
+            status = read_status()
+            progress = status if status.get("running") else None
         return {
             "request": request,
             "version": __version__,
             "disclaimer": DISCLAIMER,
             "demo": demo,
             "run_id": run_row[0] if run_row else None,
+            "progress": progress,
             **extra,
         }
 
@@ -449,6 +475,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         temporary.replace(status_path)
         return current
 
+    def loading_page(request: Request):
+        status = read_status()
+        progress = status if status.get("running") else {
+            "message": "Writing a downloaded file into the database",
+            "percent": None,
+            "received_label": "",
+        }
+        return templates.TemplateResponse(
+            request,
+            "loading.html",
+            {
+                "request": request,
+                "version": __version__,
+                "disclaimer": DISCLAIMER,
+                "demo": False,
+                "run_id": None,
+                "progress": progress,
+            },
+        )
+
     if read_status().get("running"):
         write_status(running=False, error="The previous pull stopped before it finished.")
 
@@ -470,6 +516,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             error=status["error"],
             percent=status.get("percent"),
             received_label=status.get("received_label") or "",
+            progress=None,
         )
         return templates.TemplateResponse(request, "sources.html", context)
 
@@ -495,7 +542,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         focus: str = Form(""),
     ):
         from fraudledger.ingest.catalog import CUSTOM_KINDS, KNOWN_SOURCES, validate_http_url
-        from fraudledger.ingest.pull import pull, pull_working
         from fraudledger.pipeline import execute_run
 
         if read_status().get("running"):
@@ -541,39 +587,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
 
         def job() -> None:
-            from fraudledger.ingest.common import set_progress_reporter
+            from fraudledger.ingest.common import download, set_progress_reporter
+            from fraudledger.ingest.pull import LABELS, load_local, plan, plan_working
 
             connection = None
             set_progress_reporter(reporter)
             try:
-                with _LOCK:
-                    connection = db()
-                    if target_key == "working":
-                        text = pull_working(connection, settings)
-                    else:
-                        text = pull(
-                            connection,
-                            settings,
-                            target_key,
-                            url=target_url,
-                            drop_demo=remove_demo,
-                            focus=chosen_focus if target_key == "medicaid" else None,
-                        )
-                    if score:
-                        facts = connection.execute("SELECT COUNT(*) FROM facts_medicaid").fetchone()[0]
-                        if facts:
-                            run_id = execute_run(connection, settings)
-                            text += f" Run {run_id}."
-                        else:
-                            text += " No billing facts yet, so detection was not run."
-                    write_status(running=False, message=text, error="")
+                if target_key == "working":
+                    steps = plan_working(settings)
+                else:
+                    steps = plan(
+                        settings,
+                        target_key,
+                        url=target_url,
+                        focus=chosen_focus,
+                        drop_demo=remove_demo,
+                    )
+                messages: list[str] = []
+                for key, source_url, options in steps:
+                    if key == "skip":
+                        messages.append(f"NPPES skipped: {source_url}")
+                        continue
+                    label = LABELS.get(key, key)
+                    dest = settings.data_dir / "tmp" / f"{key}.download"
+                    download(source_url, dest, label=label)
+                    with _LOCK:
+                        connection = db()
+                        try:
+                            messages.append(
+                                load_local(
+                                    connection,
+                                    settings,
+                                    key,
+                                    dest,
+                                    source_url,
+                                    drop_demo=bool(options.get("drop_demo")),
+                                    focus=options.get("focus"),
+                                )
+                            )
+                        finally:
+                            connection.close()
+                            connection = None
+                text = " ".join(messages)
+                if score:
+                    with _LOCK:
+                        connection = db()
+                        try:
+                            facts = connection.execute("SELECT COUNT(*) FROM facts_medicaid").fetchone()[0]
+                            if facts:
+                                run_id = execute_run(connection, settings)
+                                text += f" Run {run_id}."
+                            else:
+                                text += " No billing facts yet, so detection was not run."
+                        finally:
+                            connection.close()
+                            connection = None
+                write_status(running=False, message=text, error="")
             except SystemExit as exc:
                 write_status(running=False, message="", error=str(exc))
             except Exception as exc:
                 write_status(running=False, message="", error=str(exc))
             finally:
-                from fraudledger.ingest.common import set_progress_reporter
-
                 set_progress_reporter(None)
                 if connection is not None:
                     connection.close()

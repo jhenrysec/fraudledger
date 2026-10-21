@@ -81,6 +81,77 @@ def pull(
     raise SystemExit(f"Unknown source: {key}")
 
 
+def plan(settings: Settings, key: str, url: str | None = None, focus: str | None = None, drop_demo: bool = False) -> list:
+    """Resolve download URLs. No database connection.
+
+    A combined hospice or home-health key becomes the enrollment file, then the owner file.
+    """
+    if key in PAIRS:
+        if url:
+            raise SystemExit("Paste a URL with a single file type, not the combined owner source.")
+        enrollment_key, owner_key = PAIRS[key]
+        return [
+            (enrollment_key, resolve_file_url(settings, enrollment_key), {}),
+            (owner_key, resolve_file_url(settings, owner_key), {}),
+        ]
+    if key == "skip":
+        raise SystemExit("Unknown source: skip")
+    chosen = resolve_file_url(settings, key, url)
+    options: dict = {}
+    if key == "medicaid":
+        options = {"drop_demo": drop_demo, "focus": focus}
+    return [(key, chosen, options)]
+
+
+def plan_working(settings: Settings) -> list:
+    """URLs for the public working set. NPPES is optional when its index is down."""
+    steps = []
+    steps.extend(plan(settings, "leie"))
+    steps.extend(plan(settings, "hospice"))
+    steps.extend(plan(settings, "home-health"))
+    try:
+        steps.extend(plan(settings, "nppes"))
+    except SystemExit as exc:
+        steps.append(("skip", str(exc), {}))
+    steps.extend(plan(settings, "medicaid", focus="priority", drop_demo=True))
+    return steps
+
+
+def load_local(
+    con: duckdb.DuckDBPyConnection,
+    settings: Settings,
+    key: str,
+    path,
+    url: str,
+    drop_demo: bool = False,
+    focus: str | None = None,
+) -> str:
+    """Ingest a file that is already on disk. The caller should not be mid-download."""
+    from pathlib import Path
+
+    local = str(Path(path))
+    label = LABELS.get(key, key)
+    set_progress_label(label)
+    report_progress(f"Reading {label}", None, None)
+    if key == "medicaid":
+        count = ingest_medicaid(con, settings, path=local, url=url, drop_demo=drop_demo, focus=focus)
+        kept = " Kept hospice, home health, and personal-care procedure codes." if focus == "priority" else ""
+        return f"Medicaid facts files in view: {count}. Source {url}.{kept}"
+    if key == "leie":
+        count = ingest_leie(con, settings, path=local, url=url)
+        return f"LEIE NPI rows: {count}. Source {url}"
+    if key == "nppes":
+        count = ingest_nppes(con, settings, path=local, url=url)
+        return f"NPPES NPI rows staged: {count}. Source {url}"
+    if key in {"hospice-owners", "home-health-owners"}:
+        count = ingest_ownership(con, settings, path=local, url=url, kind=key)
+        return f"Ownership edges kept: {count}. Source {url}"
+    if key in {"hospice-enrollments", "home-health-enrollments"}:
+        count = ingest_enrollments(con, settings, path=local, url=url, kind=key)
+        return f"Enrollment rows: {count}. Source {url}"
+    raise SystemExit(f"Unknown source: {key}")
+
+
 def pull_working(con: duckdb.DuckDBPyConnection, settings: Settings) -> str:
     """LEIE, hospice, home health, optional NPPES, then priority Medicaid codes.
 

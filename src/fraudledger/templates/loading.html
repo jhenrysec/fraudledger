@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Loading · Fraud Ledger{% endblock %}
+{% block body %}
+<meta http-equiv="refresh" content="2">
+<h1>The database is busy</h1>
+<p>A file that already downloaded is being written into the local database. Queue and the other review pages open again as soon as that write finishes. Downloading the next file does not block them. This page refreshes every few seconds.</p>
+<p><a href="/sources">Watch the percent on Sources</a></p>
+{% endblock %}

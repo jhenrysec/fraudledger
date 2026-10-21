@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS cluster_members (
     provider_key VARCHAR
 );
 
+CREATE TABLE IF NOT EXISTS enrollments (
+    enrollment_id VARCHAR,
+    npi VARCHAR,
+    ccn VARCHAR,
+    name VARCHAR,
+    address VARCHAR,
+    city VARCHAR,
+    state VARCHAR,
+    zip VARCHAR,
+    origin VARCHAR
+);
+
 CREATE TABLE IF NOT EXISTS review_states (
     provider_key VARCHAR PRIMARY KEY,
     state VARCHAR,

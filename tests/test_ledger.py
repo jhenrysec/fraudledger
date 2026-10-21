@@ -235,6 +235,108 @@ class ApiTests(unittest.TestCase):
             missing = client.get("/provider/not a key")
             self.assertEqual(missing.status_code, 400)
 
+    def test_sources_page_and_rejected_url(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from fraudledger.api.app import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            client = TestClient(create_app(settings))
+            page = client.get("/sources")
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("Your own URL", page.text)
+            self.assertIn("Medicaid Provider Spending", page.text)
+            rejected = client.post(
+                "/sources",
+                data={"mode": "url", "url": "ftp://example.com/file.csv", "as_kind": "leie"},
+            )
+            self.assertEqual(rejected.status_code, 400)
+
+
+class CatalogTests(unittest.TestCase):
+    def test_medicaid_prefers_latest_parquet(self) -> None:
+        from fraudledger.ingest.catalog import medicaid_url_from_html
+
+        html = """
+        <a href="https://example.test/datasets/medicaid-provider-spending/2026-02-09/dataset/medicaid-provider-spending.csv.zip">zip</a>
+        <a href="https://example.test/datasets/medicaid-provider-spending/2026-02-09/dataset/medicaid-provider-spending.parquet">parquet</a>
+        <a href="https://example.test/datasets/medicaid-provider-spending/2024-01-01/dataset/medicaid-provider-spending.parquet">old</a>
+        """
+        chosen = medicaid_url_from_html(html)
+        self.assertTrue(chosen.endswith("2026-02-09/dataset/medicaid-provider-spending.parquet"))
+
+    def test_nppes_skips_weekly_and_reports_maintenance(self) -> None:
+        from fraudledger.ingest.catalog import nppes_monthly_url_from_html
+
+        html = """
+        <a href="NPPES_Data_Dissemination_October_2026.zip">NPPES Data Dissemination V.2 (October 12, 2026)</a>
+        <a href="NPPES_Deactivated_NPI_Report.zip">Monthly Deactivation Update</a>
+        <a href="weekly/NPPES_Weekly.zip">Weekly Update</a>
+        """
+        self.assertEqual(
+            nppes_monthly_url_from_html(html),
+            "https://download.cms.gov/nppes/NPPES_Data_Dissemination_October_2026.zip",
+        )
+        with self.assertRaises(SystemExit):
+            nppes_monthly_url_from_html("<h2>This site will be down for maintenance until further notice</h2>")
+
+    def test_cms_catalog_picks_newest_csv(self) -> None:
+        from fraudledger.ingest.catalog import latest_csv_url, validate_http_url
+
+        catalog = {
+            "dataset": [
+                {
+                    "title": "Hospice All Owners : 2026-04-01",
+                    "modified": "2026-06-17",
+                    "distribution": [{"downloadURL": "https://data.cms.gov/old.csv", "format": "CSV"}],
+                },
+                {
+                    "title": "Hospice All Owners : 2026-10-01",
+                    "modified": "2026-10-19",
+                    "distribution": [{"downloadURL": "https://data.cms.gov/new.csv", "format": "CSV"}],
+                },
+                {
+                    "title": "Hospice Enrollments : 2026-10-01",
+                    "modified": "2026-10-19",
+                    "distribution": [{"downloadURL": "https://data.cms.gov/enroll.csv", "format": "CSV"}],
+                },
+            ]
+        }
+        self.assertEqual(latest_csv_url(catalog, "Hospice All Owners"), "https://data.cms.gov/new.csv")
+        with self.assertRaises(SystemExit):
+            validate_http_url("file:///tmp/secret.csv")
+
+    def test_enrollment_npi_links_owner_edge(self) -> None:
+        from fraudledger.ingest.public import ingest_enrollments, ingest_ownership
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            con = connect(settings.db_path)
+            enrollments = Path(tmp) / "enroll.csv"
+            enrollments.write_text(
+                "ENROLLMENT ID,NPI,ORGANIZATION NAME,ADDRESS LINE 1,CITY,STATE,ZIP CODE\n"
+                "ENR1,1999990010,Linked Hospice,10 SHARED WAY,PHOENIX,AZ,85001\n"
+                "ENR1,1999990011,Linked Hospice,10 SHARED WAY,PHOENIX,AZ,85001\n",
+                encoding="utf-8",
+            )
+            owners = Path(tmp) / "owners.csv"
+            owners.write_text(
+                "ENROLLMENT ID,ASSOCIATE ID - OWNER,ORGANIZATION NAME - OWNER,ROLE CODE - OWNER,PERCENTAGE OWNERSHIP\n"
+                "ENR1,A100,Shared Control LLC,40,100\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(ingest_enrollments(con, settings, path=str(enrollments), kind="hospice-enrollments"), 2)
+            kept = ingest_ownership(con, settings, path=str(owners), kind="hospice-owners")
+            self.assertEqual(kept, 2)
+            keys = {
+                row[0]
+                for row in con.execute("SELECT provider_key FROM ownership_edges ORDER BY 1").fetchall()
+            }
+            self.assertEqual(keys, {"1999990010", "1999990011"})
+            con.close()
+
 
 if __name__ == "__main__":
     unittest.main()

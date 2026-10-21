@@ -3,7 +3,7 @@
 {% block body %}
 <h1>Review queue</h1>
 {% if empty %}
-<p class="empty">No completed run yet. On this machine, <code>fraudledger demo</code> loads a fictional fixture, or <code>fraudledger ingest medicaid --path FILE</code> loads a public extract.</p>
+<p class="empty">No completed run yet. Open <a href="/sources">Sources</a> to pull a public file or paste a URL. <code>fraudledger demo</code> loads a fictional fixture instead.</p>
 {% else %}
 <p class="sub">Run <span class="mono">{{ run_id }}</span>. Sorted by score. A dismissal stays on the row; it does not delete the flag.</p>
 <table>

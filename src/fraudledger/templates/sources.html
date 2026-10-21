@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Sources · Fraud Ledger{% endblock %}
+{% block body %}
+<h1>Public sources</h1>
+<p class="sub">Pull a known file, or paste your own http(s) URL. Nothing here submits a tip. A multi-gigabyte Medicaid pull can take a long time and the rest of the UI waits while that file is loading.</p>
+{% if running %}
+<meta http-equiv="refresh" content="5">
+<p class="banner" style="margin:0 0 16px;">Pull in progress. This page refreshes every few seconds. {{ message }}</p>
+{% elif error %}
+<p class="card" style="border-left:4px solid var(--critical);">The last pull stopped. {{ error }}</p>
+{% elif message %}
+<p class="card" style="border-left:4px solid var(--teal);">{{ message }}</p>
+{% endif %}
+
+<div class="grid">
+  <section class="card">
+    <h2>Known public files</h2>
+    <p class="sub">The current file URL is looked up when you pull. A URL saved in the config replaces that lookup.</p>
+    {% for source in sources %}
+    <form method="post" action="/sources" style="border-top:1px solid var(--line); padding:14px 0;">
+      <input type="hidden" name="mode" value="known">
+      <input type="hidden" name="source" value="{{ source.key }}">
+      <h3 style="margin:0 0 4px;">{{ source.title }}</h3>
+      <p style="margin:0 0 6px;">{{ source.summary }}</p>
+      <p class="sub" style="margin:0 0 8px;">{{ source.size_note }} <a href="{{ source.page }}">Dataset page</a></p>
+      <label style="display:flex; gap:8px; align-items:center; color:inherit;">
+        <input type="checkbox" name="drop_demo" value="1" {% if source.key == 'medicaid' %}checked{% endif %}>
+        Remove fictional demonstration rows
+      </label>
+      <label style="display:flex; gap:8px; align-items:center; color:inherit; margin:6px 0 10px;">
+        <input type="checkbox" name="run_after" value="1" checked>
+        Score after the file loads
+      </label>
+      <button type="submit" {% if running %}disabled{% endif %}>Pull {{ source.title }}</button>
+    </form>
+    {% endfor %}
+  </section>
+  <section class="card">
+    <h2>Your own URL</h2>
+    <p class="sub">Any http or https file. Choose how to read it. A local path still uses <code>fraudledger ingest … --path</code>.</p>
+    <form method="post" action="/sources">
+      <input type="hidden" name="mode" value="url">
+      <label for="url">File URL</label>
+      <input id="url" name="url" type="text" maxlength="2000" placeholder="https://example.gov/extract.csv" required>
+      <label for="as_kind" style="margin-top:10px;">Read it as</label>
+      <select id="as_kind" name="as_kind">
+        {% for kind, label in kinds %}
+        <option value="{{ kind }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:10px;">
+        <input type="checkbox" name="drop_demo" value="1">
+        Remove fictional demonstration rows
+      </label>
+      <label style="display:flex; gap:8px; align-items:center; color:inherit; margin:6px 0 10px;">
+        <input type="checkbox" name="run_after" value="1" checked>
+        Score after the file loads
+      </label>
+      <button type="submit" {% if running %}disabled{% endif %}>Pull this URL</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

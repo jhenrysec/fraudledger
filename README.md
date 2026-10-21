@@ -54,24 +54,36 @@ fraudledger verify-run 20261021T120000Z
 fraudledger export-tip 20261021T120000Z
 fraudledger review 1999990001 --state watch --note "Compare to the enrollment file"
 fraudledger serve
+fraudledger sources
+fraudledger pull leie
+fraudledger pull hospice
+fraudledger pull medicaid --drop-demo
+fraudledger pull --url "$FILE_URL" --as medicaid --drop-demo
+fraudledger pull --all
 fraudledger refresh
 ```
 
-`refresh` reads URLs from the config. If every URL is empty, it exits 0 and downloads nothing. The monthly timer calls `refresh` on the 3rd day of the month at 02:00.
+`fraudledger sources` lists the known public files. `pull` looks up the current download for that file. `pull --url` uses an address you paste, and `--as` says how to read it (`medicaid`, `leie`, `nppes`, `hospice-owners`, `hospice-enrollments`, `home-health-owners`, `home-health-enrollments`). The same two choices are on the Sources page at `http://127.0.0.1:8088/sources`.
+
+Hospice and home health pulls also load the matching enrollment file. The owner extract is keyed by enrollment id; the enrollment extract supplies the NPI, which is what the billing rows use.
+
+`refresh` still downloads only the URLs saved in the config. If every URL is empty, it exits 0 and downloads nothing. Put a URL in `sources:` when you want the monthly timer to fetch that file instead of looking it up. The timer runs on the 3rd day of the month at 02:00.
+
+`pull --all` fetches every known source, including the multi-gigabyte Medicaid extract. It is not what the timer runs.
 
 `export-tip` only zips the evidence package. It does not contact the government.
 
 ## Public sources
 
-Set these in `/etc/fraudledger/config.yaml` when you want `refresh` to download them. The NPPES file name changes every month, so paste the current URL from the CMS page rather than guessing it.
+Set these in `/etc/fraudledger/config.yaml` only when you want `refresh` to use a fixed URL. Leave them empty to let `fraudledger pull` find the current file.
 
-| Source | URL |
+| Source | Where the pull looks |
 | --- | --- |
 | Medicaid Provider Spending | https://opendata.hhs.gov/datasets/medicaid-provider-spending/ |
 | NPPES monthly file | https://download.cms.gov/nppes/NPI_Files.html |
-| OIG LEIE | https://oig.hhs.gov/exclusions/exclusions_list.asp |
-| Hospice owners (PECOS) | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/hospice-all-owners |
-| Home health owners | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/home-health-agency-all-owners |
+| OIG LEIE | https://oig.hhs.gov/exclusions/downloadables/UPDATED.csv |
+| Hospice owners and enrollments | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/hospice-all-owners |
+| Home health owners and enrollments | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/home-health-agency-all-owners |
 
 v1 scores hospice and home-health patterns that show up in the Medicaid spending extract, plus an NPI match to the LEIE. Owner linking uses the CMS associate id only. A shared address is an extra edge when at least three providers use the same street, city, and state. Name-only LEIE matches are not flags.
 

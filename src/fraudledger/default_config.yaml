@@ -16,11 +16,15 @@ tier_high: 5
 tier_elevated: 3
 
 sources:
+  # Leave a URL empty and `fraudledger pull` looks up the current public file.
+  # A value here replaces that lookup for `pull` and is what `refresh` downloads.
   medicaid_url: ""
   nppes_url: ""
   leie_url: ""
   hospice_owners_url: ""
+  hospice_enrollments_url: ""
   home_health_owners_url: ""
+  home_health_enrollments_url: ""
 
 rules:
   R01:

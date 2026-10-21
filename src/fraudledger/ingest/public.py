@@ -214,6 +214,16 @@ def ingest_ownership(
                 f"Headers: {reader.fieldnames[:24]}"
             )
         con.execute("DELETE FROM ownership_edges WHERE origin = ?", [f"public:{kind}"])
+        npi_by_enrollment: dict[str, list[str]] = {}
+        for enrollment_id, mapped in con.execute(
+            """
+            SELECT enrollment_id, npi FROM enrollments
+            WHERE npi IS NOT NULL AND npi <> ''
+            """
+        ).fetchall():
+            slot = npi_by_enrollment.setdefault(enrollment_id, [])
+            if mapped not in slot:
+                slot.append(mapped)
         batch = []
         for row in reader:
             owner_key = (row.get(associate) or "").strip()
@@ -221,8 +231,13 @@ def ingest_ownership(
                 continue
             npi = re.sub(r"\D", "", row.get(provider_npi) or "") if provider_npi else ""
             enrollment_id = (row.get(enrollment) or "").strip() if enrollment else ""
-            provider_key = npi.zfill(10) if len(npi) == 10 else enrollment_id
-            if not provider_key:
+            if len(npi) == 10:
+                provider_keys = [npi.zfill(10)]
+            elif enrollment_id and npi_by_enrollment.get(enrollment_id):
+                provider_keys = list(npi_by_enrollment[enrollment_id])
+            elif enrollment_id:
+                provider_keys = [enrollment_id]
+            else:
                 continue
             raw_percent = (row.get(percent) or "").strip() if percent else ""
             try:
@@ -237,31 +252,34 @@ def ingest_ownership(
             name = ""
             if owner_name:
                 name = (row.get(owner_name) or "").strip()
-            batch.append(
-                (
-                    owner_key,
-                    name or None,
-                    provider_key,
-                    percentage,
-                    role_code or None,
-                    strength,
-                    edge_weight,
-                    None,
-                    f"{kind}:{enrollment_id}:{owner_key}:{role_code}",
-                    f"public:{kind}",
+            org = (row.get(org_name) or "").strip() if org_name else ""
+            for provider_key in provider_keys:
+                batch.append(
+                    (
+                        owner_key,
+                        name or None,
+                        provider_key,
+                        percentage,
+                        role_code or None,
+                        strength,
+                        edge_weight,
+                        None,
+                        f"{kind}:{enrollment_id}:{owner_key}:{role_code}:{provider_key}",
+                        f"public:{kind}",
+                    )
                 )
-            )
-            if org_name and npi:
-                con.execute(
-                    """
-                    INSERT INTO providers (
-                        provider_key, npi, enrollment_id, ccn, name, entity_type, taxonomy,
-                        address, city, state, zip, enumeration_date, origin
-                    ) VALUES (?, ?, ?, NULL, ?, 'organization', NULL, NULL, NULL, NULL, NULL, NULL, 'public')
-                    ON CONFLICT (provider_key) DO NOTHING
-                    """,
-                    [provider_key, npi.zfill(10) if len(npi) == 10 else None, enrollment_id or None, (row.get(org_name) or "").strip() or None],
-                )
+                linked_npi = provider_key if len(provider_key) == 10 and provider_key.isdigit() else None
+                if org and linked_npi:
+                    con.execute(
+                        """
+                        INSERT INTO providers (
+                            provider_key, npi, enrollment_id, ccn, name, entity_type, taxonomy,
+                            address, city, state, zip, enumeration_date, origin
+                        ) VALUES (?, ?, ?, NULL, ?, 'organization', NULL, NULL, NULL, NULL, NULL, NULL, 'public')
+                        ON CONFLICT (provider_key) DO NOTHING
+                        """,
+                        [provider_key, linked_npi, enrollment_id or None, org or None],
+                    )
         if batch:
             con.executemany(
                 """
@@ -403,3 +421,97 @@ def ingest_nppes(
     inserted = con.execute("SELECT COUNT(*) FROM nppes_stage").fetchone()[0]
     _record_snapshot(con, "nppes", locator, source, digest, note)
     return int(inserted)
+
+
+def ingest_enrollments(
+    con: duckdb.DuckDBPyConnection,
+    settings: Settings,
+    path: str | None = None,
+    url: str | None = None,
+    kind: str = "enrollments",
+) -> int:
+    """Load PECOS enrollment rows so an enrollment id can be replaced by its NPI."""
+    settings.ensure_dirs()
+    source, locator = _input_path(settings, path, url, kind)
+    readable = materialize(source, settings.data_dir / "tmp" / "unpack")
+    digest, note = store_raw(settings.data_dir, source, kind, locator, readable.name)
+    inserted = 0
+    with readable.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            raise SystemExit("Enrollment file has no header")
+        lookup = {normalize_header(name): name for name in reader.fieldnames}
+
+        def pick(*candidates: str) -> str | None:
+            for candidate in candidates:
+                if candidate in lookup:
+                    return lookup[candidate]
+            return None
+
+        enrollment = pick("enrollment_id", "enrollment")
+        npi_col = pick("npi")
+        if not enrollment or not npi_col:
+            raise SystemExit(
+                "Enrollment file needs ENROLLMENT ID and NPI. "
+                f"Headers: {reader.fieldnames[:24]}"
+            )
+        ccn = pick("ccn")
+        org = pick("organization_name", "org_name")
+        address = pick("address_line_1", "address")
+        city = pick("city")
+        state = pick("state")
+        postal = pick("zip_code", "zip")
+        origin = f"public:{kind}"
+        con.execute("DELETE FROM enrollments WHERE origin = ?", [origin])
+        batch = []
+        for row in reader:
+            enrollment_id = (row.get(enrollment) or "").strip()
+            npi = re.sub(r"\D", "", row.get(npi_col) or "")
+            if not enrollment_id or len(npi) != 10:
+                continue
+            batch.append(
+                (
+                    enrollment_id,
+                    npi,
+                    (row.get(ccn) or "").strip() if ccn else None,
+                    (row.get(org) or "").strip() if org else None,
+                    (row.get(address) or "").strip() if address else None,
+                    (row.get(city) or "").strip() if city else None,
+                    (row.get(state) or "").strip() if state else None,
+                    (row.get(postal) or "").strip() if postal else None,
+                    origin,
+                )
+            )
+        if batch:
+            con.executemany(
+                """
+                INSERT INTO enrollments (
+                    enrollment_id, npi, ccn, name, address, city, state, zip, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                batch,
+            )
+            inserted = len(batch)
+            con.executemany(
+                """
+                INSERT INTO providers (
+                    provider_key, npi, enrollment_id, ccn, name, entity_type, taxonomy,
+                    address, city, state, zip, enumeration_date, origin
+                ) VALUES (?, ?, ?, ?, ?, 'organization', NULL, ?, ?, ?, ?, NULL, ?)
+                ON CONFLICT (provider_key) DO UPDATE SET
+                    npi = COALESCE(providers.npi, excluded.npi),
+                    enrollment_id = COALESCE(providers.enrollment_id, excluded.enrollment_id),
+                    ccn = COALESCE(providers.ccn, excluded.ccn),
+                    name = COALESCE(providers.name, excluded.name),
+                    address = COALESCE(providers.address, excluded.address),
+                    city = COALESCE(providers.city, excluded.city),
+                    state = COALESCE(providers.state, excluded.state),
+                    zip = COALESCE(providers.zip, excluded.zip)
+                """,
+                [
+                    (npi, npi, enrollment_id, ccn_value, name, street, city_name, state_name, zip_code, origin)
+                    for enrollment_id, npi, ccn_value, name, street, city_name, state_name, zip_code, origin in batch
+                ],
+            )
+    _record_snapshot(con, kind, locator, source, digest, note)
+    return inserted

@@ -8,7 +8,7 @@ from pathlib import Path
 from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.ingest.demo import load_demo
-from fraudledger.ingest.public import ingest_leie, ingest_medicaid, ingest_nppes, ingest_ownership
+from fraudledger.ingest.public import ingest_enrollments, ingest_leie, ingest_medicaid, ingest_nppes, ingest_ownership
 from fraudledger.pipeline import execute_run
 from fraudledger.report.assemble import verify_run
 from fraudledger.reviews import set_review
@@ -114,19 +114,73 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
     if sources.get("nppes_url"):
         ingest_nppes(con, settings, url=sources["nppes_url"])
         did = True
-    if sources.get("hospice_owners_url"):
-        ingest_ownership(con, settings, url=sources["hospice_owners_url"], kind="hospice_owners")
-        did = True
-    if sources.get("home_health_owners_url"):
-        ingest_ownership(con, settings, url=sources["home_health_owners_url"], kind="home_health_owners")
-        did = True
+    for enrollment_key, owner_key in (
+        ("hospice_enrollments_url", "hospice_owners_url"),
+        ("home_health_enrollments_url", "home_health_owners_url"),
+    ):
+        if sources.get(enrollment_key):
+            ingest_enrollments(con, settings, url=sources[enrollment_key], kind=enrollment_key.removesuffix("_url"))
+            did = True
+        if sources.get(owner_key):
+            ingest_ownership(con, settings, url=sources[owner_key], kind=owner_key.removesuffix("_url"))
+            did = True
     if not did:
         print("No source URLs configured. Nothing downloaded.")
+        print("Use `fraudledger sources` and `fraudledger pull <name>`, or paste a URL with `fraudledger pull --url`.")
         con.close()
         return 0
     run_id = execute_run(con, settings)
     print(f"Run {run_id}")
     con.close()
+    return 0
+
+
+def _cmd_sources(_args: argparse.Namespace) -> int:
+    from fraudledger.ingest.catalog import KNOWN_SOURCES
+
+    for source in KNOWN_SOURCES:
+        print(f"{source.key}\t{source.title}")
+        print(f"  {source.summary}")
+        print(f"  {source.size_note}")
+        print(f"  {source.page}")
+    print("Custom file: fraudledger pull --url https://example/file.csv --as leie")
+    return 0
+
+
+def _cmd_pull(args: argparse.Namespace) -> int:
+    from fraudledger.ingest.catalog import KNOWN_SOURCES
+    from fraudledger.ingest.pull import pull
+
+    settings, con = _open(args)
+    keys = [item.key for item in KNOWN_SOURCES]
+    try:
+        if args.url:
+            if not args.as_kind:
+                raise SystemExit("Pass --as with --url so the file can be read as the right kind.")
+            message = pull(con, settings, args.as_kind, url=args.url, drop_demo=args.drop_demo)
+            print(message)
+        elif args.all:
+            messages = []
+            for key in keys:
+                print(f"Pulling {key}...")
+                messages.append(pull(con, settings, key, drop_demo=args.drop_demo and key == "medicaid"))
+            print("\n".join(messages))
+        elif args.source:
+            if args.source not in keys:
+                raise SystemExit(f"Unknown source {args.source}. Try: {', '.join(keys)}")
+            message = pull(con, settings, args.source, drop_demo=args.drop_demo)
+            print(message)
+        else:
+            raise SystemExit("Pass a source name, --url, or --all. See `fraudledger sources`.")
+        if not args.no_run:
+            facts = con.execute("SELECT COUNT(*) FROM facts_medicaid").fetchone()[0]
+            if facts:
+                run_id = execute_run(con, settings)
+                print(f"Run {run_id}")
+            else:
+                print("No billing facts yet, so detection was not run.")
+    finally:
+        con.close()
     return 0
 
 
@@ -235,6 +289,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     refresh = sub.add_parser("refresh", help="Download configured source URLs, then score. No-ops if none are set.")
     refresh.set_defaults(func=_cmd_refresh)
+
+    sub.add_parser("sources", help="List known public files.").set_defaults(func=_cmd_sources)
+    pull = sub.add_parser("pull", help="Download a known public file, or a URL you paste.")
+    pull.add_argument("source", nargs="?", help="medicaid, leie, nppes, hospice, or home-health.")
+    pull.add_argument("--url", help="Download this http(s) URL instead of a known file.")
+    pull.add_argument(
+        "--as",
+        dest="as_kind",
+        choices=[
+            "medicaid",
+            "leie",
+            "nppes",
+            "hospice-owners",
+            "hospice-enrollments",
+            "home-health-owners",
+            "home-health-enrollments",
+        ],
+        help="How to read --url.",
+    )
+    pull.add_argument("--all", action="store_true", help="Pull every known source. The Medicaid file is multi-gigabyte.")
+    pull.add_argument("--drop-demo", action="store_true", help="Remove fictional rows when loading Medicaid.")
+    pull.add_argument("--no-run", action="store_true", help="Load files without scoring them.")
+    pull.set_defaults(func=_cmd_pull)
 
     verify = sub.add_parser("verify-run", help="Recompute SHA-256 values in a run manifest.")
     verify.add_argument("run_id")

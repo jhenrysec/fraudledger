@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import threading
 from pathlib import Path
@@ -365,6 +366,130 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except SystemExit as exc:
             raise HTTPException(404, str(exc)) from exc
         return FileResponse(path, filename=path.name, media_type="application/zip")
+
+    status_path = settings.data_dir / "logs" / "pull_status.json"
+
+    def read_status() -> dict:
+        if not status_path.is_file():
+            return {"running": False, "message": "", "error": ""}
+        try:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {"running": False, "message": "", "error": ""}
+        return {
+            "running": bool(data.get("running")),
+            "message": str(data.get("message") or ""),
+            "error": str(data.get("error") or ""),
+        }
+
+    def write_status(**fields: object) -> dict:
+        current = read_status()
+        current.update(fields)
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(json.dumps(current), encoding="utf-8")
+        return current
+
+    if read_status().get("running"):
+        write_status(running=False, error="The previous pull stopped before it finished.")
+
+    def sources_page(request: Request, connection):
+        from fraudledger.ingest.catalog import CUSTOM_KINDS, KNOWN_SOURCES
+
+        status = read_status()
+        run_row = None
+        if connection is not None and not status["running"]:
+            run_row = latest(connection)
+        context = shell(
+            request,
+            connection,
+            run_row,
+            sources=KNOWN_SOURCES,
+            kinds=CUSTOM_KINDS,
+            running=status["running"],
+            message=status["message"],
+            error=status["error"],
+        )
+        return templates.TemplateResponse(request, "sources.html", context)
+
+    @app.get("/sources", response_class=HTMLResponse)
+    def sources(request: Request):
+        status = read_status()
+        if status["running"]:
+            return sources_page(request, None)
+
+        def read(connection):
+            return sources_page(request, connection)
+
+        return call(read)
+
+    @app.post("/sources")
+    def start_pull(
+        mode: str = Form(...),
+        source: str = Form(""),
+        url: str = Form(""),
+        as_kind: str = Form(""),
+        drop_demo: str = Form(""),
+        run_after: str = Form(""),
+    ):
+        from fraudledger.ingest.catalog import CUSTOM_KINDS, KNOWN_SOURCES, validate_http_url
+        from fraudledger.ingest.pull import pull
+        from fraudledger.pipeline import execute_run
+
+        if read_status().get("running"):
+            return RedirectResponse("/sources", status_code=303)
+        known = {item.key for item in KNOWN_SOURCES}
+        kinds = {item[0] for item in CUSTOM_KINDS}
+        remove_demo = drop_demo == "1"
+        score = run_after == "1"
+        if mode == "url":
+            try:
+                chosen = validate_http_url(url)
+            except SystemExit as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if as_kind not in kinds:
+                raise HTTPException(400, "Choose how to read that URL.")
+            target_key = as_kind
+            target_url = chosen
+        elif mode == "known":
+            if source not in known:
+                raise HTTPException(400, "Unknown public source.")
+            target_key = source
+            target_url = None
+        else:
+            raise HTTPException(400, "Unknown pull mode.")
+
+        write_status(running=True, message=f"Starting {target_key}.", error="")
+
+        def job() -> None:
+            connection = None
+            try:
+                with _LOCK:
+                    connection = db()
+                    text = pull(
+                        connection,
+                        settings,
+                        target_key,
+                        url=target_url,
+                        drop_demo=remove_demo,
+                    )
+                    if score:
+                        facts = connection.execute("SELECT COUNT(*) FROM facts_medicaid").fetchone()[0]
+                        if facts:
+                            run_id = execute_run(connection, settings)
+                            text += f" Run {run_id}."
+                        else:
+                            text += " No billing facts yet, so detection was not run."
+                    write_status(running=False, message=text, error="")
+            except SystemExit as exc:
+                write_status(running=False, message="", error=str(exc))
+            except Exception as exc:
+                write_status(running=False, message="", error=str(exc))
+            finally:
+                if connection is not None:
+                    connection.close()
+
+        threading.Thread(target=job, name="fraudledger-pull", daemon=True).start()
+        return RedirectResponse("/sources", status_code=303)
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):

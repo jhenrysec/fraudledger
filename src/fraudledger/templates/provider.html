@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ provider_key }} · Fraud Ledger{% endblock %}
+{% block body %}
+<p class="sub"><a href="/?run={{ run_id }}">Queue</a> · run <span class="mono">{{ run_id }}</span></p>
+<h1>{{ identity[0] if identity and identity[0] else provider_key }}</h1>
+<p class="sub mono">{{ provider_key }}</p>
+<div class="grid">
+  <section class="card">
+    {% if score %}
+    <p><span class="badge tier-{{ score[1]|lower }}">{{ score[1] }}</span> score {{ "%.1f"|format(score[0]) }} · {{ score[4] }} rule{{ "" if score[4] == 1 else "s" }}</p>
+    <p>Rules <span class="mono">{{ score[2] }}</span></p>
+    <p>Sum of peer-gap estimates: {% if score[3] %}${{ "{:,.0f}".format(score[3]) }}{% else %}none on these rules{% endif %}.</p>
+    {% else %}
+    <p>No score in this run. The provider can still appear here from an ownership cluster.</p>
+    {% endif %}
+    {{ spark|safe }}
+    <ul>
+      {% for rule_id, metric, threshold, peer, dollars, detail in flags %}
+      <li>
+        <span class="mono">{{ rule_id }}</span>
+        metric {{ "%.4g"|format(metric or 0) }}, threshold {{ "%.4g"|format(threshold or 0) }}
+        {% if peer is not none %}, peer {{ "%.4g"|format(peer) }}{% endif %}
+        {% if dollars %}, peer-gap ${{ "{:,.0f}".format(dollars) }}{% endif %}
+        <br><span class="mono">{{ detail }}</span>
+      </li>
+      {% else %}
+      <li>No rule rows for this provider in this run.</li>
+      {% endfor %}
+    </ul>
+  </section>
+  <aside>
+    <section class="card">
+      <h2>Identity</h2>
+      {% if identity %}
+      <p>{{ identity[1] or "entity type unknown" }}{% if identity[2] %} · {{ identity[2] }}{% endif %}</p>
+      <p>{{ identity[3] or "" }}<br>{{ identity[4] or "" }}{% if identity[5] %}, {{ identity[5] }}{% endif %} {{ identity[6] or "" }}</p>
+      <p>Enumeration {{ identity[7] or "unknown" }} · source {{ identity[8] or "unknown" }}</p>
+      {% else %}
+      <p>No directory row. The NPI is known only from billing facts.</p>
+      {% endif %}
+      {% if clusters %}
+      <p>Clusters
+        {% for cid in clusters %}
+        <a href="/cluster/{{ cid }}?run={{ run_id }}">{{ cid }}</a>
+        {% endfor %}
+      </p>
+      {% endif %}
+    </section>
+    <section class="card">
+      <h2>Review state</h2>
+      <form method="post" action="/review">
+        <input type="hidden" name="provider_key" value="{{ provider_key }}">
+        <input type="hidden" name="run" value="{{ run_id }}">
+        <label for="state">State</label>
+        <select id="state" name="state">
+          {% for item in states %}
+          <option value="{{ item }}" {% if review and review[0] == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+        <label for="note">Note</label>
+        <textarea id="note" name="note" rows="4">{{ review[1] if review and review[1] else "" }}</textarea>
+        <p><button type="submit">Save review</button></p>
+      </form>
+      {% if review and review[2] %}<p class="sub">Updated {{ review[2] }}</p>{% endif %}
+    </section>
+  </aside>
+</div>
+<section class="card">
+  <h2>Ownership edges</h2>
+  <table>
+    <thead><tr><th>Owner id</th><th>Name</th><th>Role</th><th class="num">Percent</th><th class="num">Weight</th><th>Origin</th></tr></thead>
+    <tbody>
+      {% for owner, name, percent, role, weight, origin in edges %}
+      <tr>
+        <td class="mono">{{ owner }}</td>
+        <td>{{ name or "—" }}</td>
+        <td class="mono">{{ role or "—" }}</td>
+        <td class="num">{{ percent if percent is not none else "—" }}</td>
+        <td class="num">{{ "%.2f"|format(weight or 0) }}</td>
+        <td>{{ origin }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No ownership edge uses this provider key.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

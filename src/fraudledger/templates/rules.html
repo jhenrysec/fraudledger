@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Rules · Fraud Ledger{% endblock %}
+{% block body %}
+<h1>Detection rules</h1>
+<p class="sub">Config SHA-256 <span class="mono">{{ config_sha }}</span>. Thresholds travel with every run. Rules are not mutually exclusive.</p>
+{% for rule in catalog %}
+<article class="card">
+  <h2><span class="mono">{{ rule.id }}</span> {{ rule.title }} <span class="badge">weight {{ rule.weight }}</span></h2>
+  <p>{{ rule.blurb }}</p>
+  {% if rule.settings %}
+  <p class="mono">{{ rule.settings }}</p>
+  {% endif %}
+</article>
+{% endfor %}
+<p class="sub">Score starts as the sum of distinct rule weights. Add 2.0 when at least 3 distinct rules fire. Add 3.0 when R11 fires. Add the cluster bonus only when this provider is flagged and another member of the same multi-provider cluster is also flagged. Tiers: Critical if R11 or score is at least 8; High at least 5; Elevated at least 3; otherwise Monitor.</p>
+{% endblock %}

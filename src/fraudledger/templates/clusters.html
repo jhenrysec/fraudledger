@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Clusters · Fraud Ledger{% endblock %}
+{% block body %}
+<h1>Ownership clusters</h1>
+<p class="sub">Run <span class="mono">{{ run_id }}</span>. Communities with fewer than two providers are dropped. A cluster is a grouping, not a finding.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Cluster</th>
+      <th class="num">Providers</th>
+      <th class="num">Owners</th>
+      <th class="num">Flagged</th>
+      <th class="num">Score</th>
+      <th class="num">Peer gap</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for cid, providers, owners, flagged, score, excess in rows %}
+    <tr>
+      <td><a href="/cluster/{{ cid }}?run={{ run_id }}">{{ cid }}</a></td>
+      <td class="num">{{ providers }}</td>
+      <td class="num">{{ owners }}</td>
+      <td class="num">{{ flagged }}</td>
+      <td class="num">{{ "%.1f"|format(score or 0) }}</td>
+      <td class="num">{% if excess %}${{ "{:,.0f}".format(excess) }}{% else %}—{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No multi-provider cluster in this run.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

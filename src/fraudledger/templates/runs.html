@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Runs · Fraud Ledger{% endblock %}
+{% block body %}
+<h1>Runs</h1>
+<p class="sub">Each run freezes a config hash and an evidence manifest. <code>fraudledger verify-run RUN</code> fails if a file changes.</p>
+<table>
+  <thead>
+    <tr><th>Run</th><th>Status</th><th>Started</th><th>Finished</th><th>Demo</th><th>Git</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for run_id, started, finished, status, demo_only, config_sha, git_sha in rows %}
+    <tr>
+      <td><a href="/runs/{{ run_id }}">{{ run_id }}</a></td>
+      <td>{{ status }}</td>
+      <td>{{ started }}</td>
+      <td>{{ finished or "—" }}</td>
+      <td>{{ "yes" if demo_only else "no" }}</td>
+      <td class="mono">{{ git_sha or "" }}</td>
+      <td><a href="/export/{{ run_id }}">zip</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7">No runs yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

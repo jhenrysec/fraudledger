@@ -1,0 +1,90 @@
+# Fraud Ledger defaults. Copied to /etc/fraudledger/config.yaml on install.
+# Thresholds are part of the audit trail: every run stores a hash of the file it used.
+
+data_dir: /var/lib/fraudledger
+bind_host: 127.0.0.1
+bind_port: 8088
+min_peer_n: 30
+min_ownership_pct: 5
+louvain_resolution: 1.0
+louvain_seed: 42
+cluster_bonus: 1.5
+multi_flag_bonus: 2.0
+multi_flag_min: 3
+tier_critical: 8
+tier_high: 5
+tier_elevated: 3
+
+sources:
+  medicaid_url: ""
+  nppes_url: ""
+  leie_url: ""
+  hospice_owners_url: ""
+  home_health_owners_url: ""
+
+rules:
+  R01:
+    title: Cost outlier
+    multiple_of_median: 3.0
+    min_paid: 100000
+    weight: 3
+  R02:
+    title: Multi-code rate outlier
+    min_codes: 2
+    weight: 2
+  R03:
+    title: High lines per beneficiary
+    max_lines_per_beneficiary: 100
+    weight: 2
+  R04:
+    title: High billing velocity
+    lines_per_working_day: 50
+    working_days_per_month: 21
+    weight: 2
+  R05:
+    title: Narrow code mill
+    max_codes: 2
+    min_paid: 1000000
+    weight: 2
+  R06:
+    title: Unnaturally flat billing
+    max_cv: 0.10
+    min_months: 6
+    min_paid: 250000
+    weight: 2
+  R07:
+    title: Billing swing
+    min_yoy: 2.0
+    min_abs_change: 1000000
+    weight: 2
+  R08:
+    title: Explosive year-over-year growth
+    min_yoy: 5.0
+    min_latest_paid: 250000
+    weight: 2
+  R09:
+    title: New entrant with high first-year paid
+    min_first_year_paid: 1000000
+    weight: 2
+  R10:
+    title: Very new high-volume entity
+    enumeration_on_or_after: "2022-01-01"
+    min_paid: 5000000
+    weight: 2
+  R11:
+    title: Billing after OIG exclusion
+    weight: 5
+
+role_strength:
+  "01": 3.0
+  "34": 3.0
+  "35": 2.5
+  "40": 3.0
+  "41": 3.0
+  "38": 2.5
+  "43": 2.5
+  "03": 2.0
+  "25": 2.0
+  "42": 2.0
+default_role_strength: 1.0
+control_roles: ["40", "41", "43", "25", "42", "03"]

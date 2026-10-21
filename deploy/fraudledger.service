@@ -1,0 +1,21 @@
+[Unit]
+Description=Fraud Ledger review UI
+After=network.target
+
+[Service]
+Type=simple
+User=fraudledger
+Group=fraudledger
+Environment=FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/fraudledger/venv/bin/fraudledger serve
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/fraudledger /var/log/fraudledger
+
+[Install]
+WantedBy=multi-user.target

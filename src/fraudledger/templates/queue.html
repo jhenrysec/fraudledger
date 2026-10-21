@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Queue · Fraud Ledger{% endblock %}
+{% block body %}
+<h1>Review queue</h1>
+{% if empty %}
+<p class="empty">No completed run yet. On this machine, <code>fraudledger demo</code> loads a fictional fixture, or <code>fraudledger ingest medicaid --path FILE</code> loads a public extract.</p>
+{% else %}
+<p class="sub">Run <span class="mono">{{ run_id }}</span>. Sorted by score. A dismissal stays on the row; it does not delete the flag.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Tier</th>
+      <th class="num">Score</th>
+      <th>Provider</th>
+      <th>Place</th>
+      <th>Rules</th>
+      <th class="num">Peer gap</th>
+      <th>Review</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key, name, city, state, score, tier, rules, excess, flags, review in rows %}
+    <tr>
+      <td class="tier-{{ tier|lower }}"><span class="badge">{{ tier }}</span></td>
+      <td class="num">{{ "%.1f"|format(score) }}</td>
+      <td><a href="/provider/{{ key }}?run={{ run_id }}">{{ name }}</a><br><span class="mono">{{ key }}</span></td>
+      <td>{{ city or "—" }}{% if state %}, {{ state }}{% endif %}</td>
+      <td class="mono">{{ rules }}</td>
+      <td class="num">{% if excess %}${{ "{:,.0f}".format(excess) }}{% else %}—{% endif %}</td>
+      <td>{{ review }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7">This run produced no scored providers.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ run_id }} · Fraud Ledger{% endblock %}
+{% block body %}
+<p class="sub"><a href="/runs">Runs</a></p>
+<h1 class="mono">{{ run_id }}</h1>
+<p class="sub">
+  <a href="/?run={{ run_id }}">Open this run in the queue</a>
+  · <a href="/export/{{ run_id }}">Download the evidence zip</a>
+</p>
+<p>The zip is for a person to read. Downloading it does not submit a tip and does not compute a reward. Public intake, if a human decides to send something, is <a href="https://america.gov/fraud">america.gov/fraud</a>.</p>
+<table>
+  <thead><tr><th>Path</th><th>Kind</th><th>SHA-256</th></tr></thead>
+  <tbody>
+    {% for path, digest, kind in artifacts %}
+    <tr>
+      <td class="mono">{{ path }}</td>
+      <td>{{ kind }}</td>
+      <td class="mono">{{ digest }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No artifact rows stored for this run.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Monthly Fraud Ledger refresh (3rd day, 02:00 local)
+
+[Timer]
+OnCalendar=*-*-03 02:00:00
+Persistent=true
+Unit=fraudledger-ingest.service
+
+[Install]
+WantedBy=timers.target

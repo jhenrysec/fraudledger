@@ -1,0 +1,16 @@
+[Unit]
+Description=Fraud Ledger public-source refresh
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=fraudledger
+Group=fraudledger
+Environment=FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/fraudledger/venv/bin/fraudledger refresh
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/fraudledger /var/log/fraudledger

@@ -183,8 +183,13 @@ def load_cms_catalog(settings: Settings) -> dict:
         return json.loads(cache.read_text(encoding="utf-8"))
     dest = settings.data_dir / "tmp" / "cms-data.json.download"
     download(CMS_CATALOG, dest)
-    cache.write_bytes(dest.read_bytes())
-    return json.loads(cache.read_text(encoding="utf-8"))
+    raw = dest.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252")
+    cache.write_text(text, encoding="utf-8")
+    return json.loads(text)
 
 
 def resolve_file_url(settings: Settings, key: str, override: str | None = None) -> str:

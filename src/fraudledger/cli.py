@@ -167,10 +167,24 @@ def _cmd_sources(_args: argparse.Namespace) -> int:
 
 def _cmd_pull(args: argparse.Namespace) -> int:
     from fraudledger.ingest.catalog import KNOWN_SOURCES
+    from fraudledger.ingest.common import percent_of, set_progress_reporter
     from fraudledger.ingest.pull import pull, pull_working
+
+    last_bucket = {"value": -1}
+
+    def _show(message, received, total) -> None:
+        pct = percent_of(received, total)
+        if pct is None:
+            return
+        bucket = pct // 5
+        if bucket == last_bucket["value"] and pct != 100:
+            return
+        last_bucket["value"] = bucket
+        print(f"{message}  {pct}%", flush=True)
 
     settings, con = _open(args)
     keys = [item.key for item in KNOWN_SOURCES]
+    set_progress_reporter(_show)
     try:
         if args.working and (args.url or args.all or args.source):
             raise SystemExit("`--working` is the whole public set. Do not combine it with a source, --url, or --all.")
@@ -209,6 +223,7 @@ def _cmd_pull(args: argparse.Namespace) -> int:
             else:
                 print("No billing facts yet, so detection was not run.")
     finally:
+        set_progress_reporter(None)
         con.close()
     return 0
 

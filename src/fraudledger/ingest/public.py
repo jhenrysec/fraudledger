@@ -10,7 +10,7 @@ import duckdb
 from fraudledger.columns import normalize_header, resolve_columns
 from fraudledger.db import refresh_facts_view
 from fraudledger.graph.edges import qualifies, weight
-from fraudledger.ingest.common import download, materialize, store_raw, utcnow
+from fraudledger.ingest.common import download, materialize, open_text, store_raw, text_encoding, utcnow
 from fraudledger.settings import Settings
 
 
@@ -62,9 +62,11 @@ def ingest_medicaid(
         header_con.close()
         reader = f"read_parquet('{readable.as_posix()}')"
     else:
-        with readable.open(newline="", encoding="utf-8-sig") as handle:
+        enc = text_encoding(readable)
+        with readable.open(newline="", encoding=enc) as handle:
             names = next(csv.reader(handle))
-        reader = "read_csv(?, header=true, sample_size=-1, ignore_errors=false)"
+        duck = "cp1252" if enc == "cp1252" else "utf-8"
+        reader = f"read_csv(?, header=true, sample_size=-1, ignore_errors=false, encoding='{duck}')"
     mapping = resolve_columns(names)
     servicing = mapping["servicing_npi"]
     beneficiaries = mapping["beneficiaries"]
@@ -131,7 +133,7 @@ def ingest_leie(
     readable = materialize(source, settings.data_dir / "tmp" / "unpack")
     digest, note = store_raw(settings.data_dir, source, "leie", locator, readable.name)
     inserted = 0
-    with readable.open(newline="", encoding="utf-8-sig") as handle:
+    with open_text(readable) as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
             raise SystemExit("LEIE file has no header")
@@ -197,7 +199,7 @@ def ingest_ownership(
     readable = materialize(source, settings.data_dir / "tmp" / "unpack")
     digest, note = store_raw(settings.data_dir, source, kind, locator, readable.name)
     inserted = 0
-    with readable.open(newline="", encoding="utf-8-sig") as handle:
+    with open_text(readable) as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
             raise SystemExit("Ownership file has no header")
@@ -332,9 +334,14 @@ def ingest_nppes(
         reader = f"read_parquet({_sql_path(readable)})"
         params: list[str] = []
     else:
-        with readable.open(newline="", encoding="utf-8-sig") as handle:
+        enc = text_encoding(readable)
+        with readable.open(newline="", encoding=enc) as handle:
             names = next(csv.reader(handle))
-        reader = "read_csv(?, header=true, sample_size=20000, all_varchar=true, ignore_errors=true)"
+        duck = "cp1252" if enc == "cp1252" else "utf-8"
+        reader = (
+            "read_csv(?, header=true, sample_size=20000, all_varchar=true, "
+            f"ignore_errors=true, encoding='{duck}')"
+        )
         params = [str(readable)]
     lookup = {normalize_header(name): name for name in names}
 
@@ -444,7 +451,7 @@ def ingest_enrollments(
     readable = materialize(source, settings.data_dir / "tmp" / "unpack")
     digest, note = store_raw(settings.data_dir, source, kind, locator, readable.name)
     inserted = 0
-    with readable.open(newline="", encoding="utf-8-sig") as handle:
+    with open_text(readable) as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
             raise SystemExit("Enrollment file has no header")

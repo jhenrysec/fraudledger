@@ -69,7 +69,7 @@ fraudledger refresh
 fraudledger report 1234567890 --run 20261021T120000Z
 ```
 
-`fraudledger pull --working` is the same action as **Load the public working set** on the Sources page. It removes demonstration rows when the Medicaid file loads.
+`fraudledger pull --working` is the same action as **Load the public working set** on the Sources page. It removes demonstration rows when the Medicaid file loads. The Sources page shows a percent-complete bar for the file currently downloading. CMS enrollment and owner files are Windows-1252; the loader accepts that encoding.
 
 `fraudledger report` writes `exports/<run>-<provider>.zip` with `narrative.txt`, `evidence.csv`, `indicators.csv`, `how-to-submit.txt`, and `report.pdf`. You attach the PDF yourself at [america.gov/fraud](https://america.gov/fraud). The command does not contact the government. Do not type the peer-gap figure into the form as money taken.
 

@@ -256,6 +256,20 @@ class ApiTests(unittest.TestCase):
             self.assertIn("Your own URL", page.text)
             self.assertIn("Medicaid Provider Spending", page.text)
             self.assertIn("Public working set", page.text)
+            status = Path(tmp) / "logs" / "pull_status.json"
+            status.parent.mkdir(parents=True, exist_ok=True)
+            status.write_text(
+                '{"running": true, "message": "OIG exclusion list", "error": "", "percent": 25, "received": 2500000, "total": 10000000}',
+                encoding="utf-8",
+            )
+            loading = client.get("/sources")
+            self.assertIn("25%", loading.text)
+            self.assertIn('role="progressbar"', loading.text)
+            self.assertIn("OIG exclusion list", loading.text)
+            status.write_text(
+                '{"running": false, "message": "", "error": "", "percent": null}',
+                encoding="utf-8",
+            )
             rejected = client.post(
                 "/sources",
                 data={"mode": "url", "url": "ftp://example.com/file.csv", "as_kind": "leie"},
@@ -424,6 +438,28 @@ class PublicReportTests(unittest.TestCase):
                 {row[0] for row in con.execute("SELECT hcpcs FROM facts_medicaid").fetchall()},
                 {"T2042"},
             )
+            con.close()
+
+    def test_windows1252_enrollment_name(self) -> None:
+        from fraudledger.ingest.common import text_encoding
+        from fraudledger.ingest.public import ingest_enrollments
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            con = connect(settings.db_path)
+            path = Path(tmp) / "enroll.csv"
+            path.write_bytes(
+                b"ENROLLMENT ID,NPI,ORGANIZATION NAME\r\n"
+                b"ENR9,1234567893,HOSPICE \xbf ST GEORGE\r\n"
+            )
+            self.assertEqual(text_encoding(path), "cp1252")
+            ingest_enrollments(con, settings, path=str(path), kind="hospice-enrollments")
+            name = con.execute(
+                "SELECT name FROM providers WHERE provider_key = '1234567893'"
+            ).fetchone()[0]
+            self.assertIn("HOSPICE", name)
+            self.assertIn("ST GEORGE", name)
             con.close()
 
 

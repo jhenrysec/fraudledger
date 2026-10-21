@@ -5,12 +5,25 @@ from __future__ import annotations
 import duckdb
 
 from fraudledger.ingest.catalog import resolve_file_url
+from fraudledger.ingest.common import report_progress, set_progress_label
 from fraudledger.ingest.public import ingest_enrollments, ingest_leie, ingest_medicaid, ingest_nppes, ingest_ownership
 from fraudledger.settings import Settings
 
 PAIRS = {
     "hospice": ("hospice-enrollments", "hospice-owners"),
     "home-health": ("home-health-enrollments", "home-health-owners"),
+}
+
+LABELS = {
+    "medicaid": "Medicaid Provider Spending",
+    "leie": "OIG exclusion list",
+    "nppes": "NPPES monthly file",
+    "hospice": "Hospice files",
+    "home-health": "Home health files",
+    "hospice-owners": "Hospice owners",
+    "hospice-enrollments": "Hospice enrollments",
+    "home-health-owners": "Home health owners",
+    "home-health-enrollments": "Home health enrollments",
 }
 
 
@@ -23,13 +36,20 @@ def pull(
     focus: str | None = None,
 ) -> str:
     """Load one known source, or one custom URL already tagged with a file kind."""
+    label = LABELS.get(key, key)
+    set_progress_label(label)
+    report_progress(label, 0, None)
     if key in PAIRS:
         if url:
             raise SystemExit("Paste a URL with a single file type, not the combined owner source.")
         enrollment_key, owner_key = PAIRS[key]
         enrollment_url = resolve_file_url(settings, enrollment_key)
         owner_url = resolve_file_url(settings, owner_key)
+        set_progress_label(LABELS[enrollment_key])
+        report_progress(LABELS[enrollment_key], 0, None)
         enrollments = ingest_enrollments(con, settings, url=enrollment_url, kind=enrollment_key)
+        set_progress_label(LABELS[owner_key])
+        report_progress(LABELS[owner_key], 0, None)
         edges = ingest_ownership(con, settings, url=owner_url, kind=owner_key)
         return (
             f"{key}: {enrollments} enrollment rows from {enrollment_url}; "

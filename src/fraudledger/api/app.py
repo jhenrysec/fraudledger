@@ -20,6 +20,30 @@ RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _LOCK = threading.Lock()
 
 
+def _percent(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(100, number))
+
+
+def _bytes_label(value: object) -> str:
+    try:
+        amount = int(value or 0)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return ""
+    if amount <= 0:
+        return ""
+    if amount >= 1_000_000_000:
+        return f"{amount / 1_000_000_000:.1f} GB"
+    if amount >= 1_000_000:
+        return f"{amount / 1_000_000:.1f} MB"
+    return f"{max(amount / 1_000, 1):.0f} KB"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     settings.ensure_dirs()
@@ -402,7 +426,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def read_status() -> dict:
         if not status_path.is_file():
-            return {"running": False, "message": "", "error": ""}
+            return {"running": False, "message": "", "error": "", "percent": None, "received_label": ""}
         try:
             data = json.loads(status_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
@@ -411,13 +435,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "running": bool(data.get("running")),
             "message": str(data.get("message") or ""),
             "error": str(data.get("error") or ""),
+            "percent": _percent(data.get("percent")),
+            "received_label": _bytes_label(data.get("received")),
         }
 
     def write_status(**fields: object) -> dict:
         current = read_status()
         current.update(fields)
         status_path.parent.mkdir(parents=True, exist_ok=True)
-        status_path.write_text(json.dumps(current), encoding="utf-8")
+        blob = json.dumps(current)
+        temporary = status_path.with_suffix(".tmp")
+        temporary.write_text(blob, encoding="utf-8")
+        temporary.replace(status_path)
         return current
 
     if read_status().get("running"):
@@ -439,6 +468,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             running=status["running"],
             message=status["message"],
             error=status["error"],
+            percent=status.get("percent"),
+            received_label=status.get("received_label") or "",
         )
         return templates.TemplateResponse(request, "sources.html", context)
 
@@ -494,10 +525,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             raise HTTPException(400, "Unknown pull mode.")
 
-        write_status(running=True, message=f"Starting {target_key}.", error="")
+        write_status(running=True, message=f"Starting {target_key}.", error="", percent=0, received=0, total=0)
+
+        def reporter(message, received, total) -> None:
+            from fraudledger.ingest.common import percent_of
+
+            write_status(
+                running=True,
+                message=str(message or ""),
+                error="",
+                received=int(received or 0),
+                total=int(total or 0),
+                percent=percent_of(received, total),
+                received_label=_bytes_label(received),
+            )
 
         def job() -> None:
+            from fraudledger.ingest.common import set_progress_reporter
+
             connection = None
+            set_progress_reporter(reporter)
             try:
                 with _LOCK:
                     connection = db()
@@ -525,6 +572,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception as exc:
                 write_status(running=False, message="", error=str(exc))
             finally:
+                from fraudledger.ingest.common import set_progress_reporter
+
+                set_progress_reporter(None)
                 if connection is not None:
                     connection.close()
 

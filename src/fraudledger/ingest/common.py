@@ -57,12 +57,64 @@ def text_encoding(path: Path) -> str:
 
 
 def open_text(path: Path):
-    return path.open(newline="", encoding=text_encoding(path))
+    encoding = text_encoding(path)
+    # Five Windows-1252 bytes are undefined. Python reports those as 'charmap'.
+    if encoding == "cp1252":
+        return path.open(newline="", encoding="cp1252", errors="replace")
+    return path.open(newline="", encoding=encoding)
+
+
+def file_kind(path: Path) -> str:
+    """parquet, zip, or text. The saved name is often *.download, so the suffix is not enough."""
+    with path.open("rb") as handle:
+        magic = handle.read(8)
+    if magic.startswith(b"PAR1"):
+        return "parquet"
+    if magic.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        return "zip"
+    return "text"
+
+
+def remote_size(url: str) -> int | None:
+    request = urllib.request.Request(
+        url,
+        method="HEAD",
+        headers={"User-Agent": "fraudledger/1.0 (public-data research)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            value = response.headers.get("Content-Length")
+            if value and value.isdigit() and int(value) > 0:
+                return int(value)
+    except (OSError, ValueError):
+        pass
+    ranged = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "fraudledger/1.0 (public-data research)",
+            "Range": "bytes=0-0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(ranged, timeout=60) as response:
+            header = response.headers.get("Content-Range") or ""
+            total = header.rsplit("/", 1)[-1]
+            if total.isdigit() and int(total) > 0:
+                return int(total)
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 def download(url: str, dest: Path, label: str | None = None) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
     name = label or _label or urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or "Download"
+    if dest.is_file():
+        have = dest.stat().st_size
+        expected = remote_size(url)
+        if expected and have == expected:
+            report_progress(f"Using the completed download of {name}", have, expected)
+            return sha256_file(dest)
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "fraudledger/1.0 (public-data research)"},
@@ -99,7 +151,7 @@ def store_raw(settings_data: Path, source_path: Path, source_id: str, url: str, 
 
 def materialize(path: Path, tmp_dir: Path) -> Path:
     """Return a CSV or Parquet path, extracting a zip when needed."""
-    if path.suffix.lower() != ".zip":
+    if file_kind(path) != "zip":
         return path
     tmp_dir.mkdir(parents=True, exist_ok=True)
     target = tmp_dir / path.stem

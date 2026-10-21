@@ -10,7 +10,15 @@ import duckdb
 from fraudledger.columns import normalize_header, resolve_columns
 from fraudledger.db import refresh_facts_view
 from fraudledger.graph.edges import qualifies, weight
-from fraudledger.ingest.common import download, materialize, open_text, store_raw, text_encoding, utcnow
+from fraudledger.ingest.common import (
+    download,
+    file_kind,
+    materialize,
+    open_text,
+    store_raw,
+    text_encoding,
+    utcnow,
+)
 from fraudledger.settings import Settings
 
 
@@ -53,7 +61,7 @@ def ingest_medicaid(
     source, locator = _input_path(settings, path, url, "medicaid")
     readable = materialize(source, settings.data_dir / "tmp" / "unpack")
     digest, note = store_raw(settings.data_dir, source, "medicaid", locator, readable.name)
-    if readable.suffix.lower() == ".parquet":
+    if file_kind(readable) == "parquet":
         header_con = duckdb.connect()
         names = [row[0] for row in header_con.execute(
             "DESCRIBE SELECT * FROM read_parquet(?)",
@@ -95,7 +103,7 @@ def ingest_medicaid(
             'public' AS origin
         FROM {reader}{where}
     """
-    if readable.suffix.lower() == ".parquet":
+    if file_kind(readable) == "parquet":
         con.execute(f"COPY ({select}) TO {_sql_path(out)} (FORMAT PARQUET)")
     else:
         con.execute(f"COPY ({select}) TO {_sql_path(out)} (FORMAT PARQUET)", [str(readable)])
@@ -321,7 +329,7 @@ def ingest_nppes(
     source, locator = _input_path(settings, path, url, "nppes")
     readable = materialize(source, settings.data_dir / "tmp" / "unpack")
     digest, note = store_raw(settings.data_dir, source, "nppes", locator, readable.name)
-    if readable.suffix.lower() == ".parquet":
+    if file_kind(readable) == "parquet":
         header_con = duckdb.connect()
         names = [
             row[0]

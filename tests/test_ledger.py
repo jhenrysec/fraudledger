@@ -496,6 +496,55 @@ class PublicReportTests(unittest.TestCase):
             self.assertIn("ST GEORGE", name)
             con.close()
 
+    def test_parquet_download_is_not_read_as_text(self) -> None:
+        import duckdb
+
+        from fraudledger.ingest.common import file_kind, materialize, open_text
+        from fraudledger.ingest.public import ingest_medicaid
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            saved = Path(tmp) / "medicaid.download"
+            duckdb.connect().execute(
+                """
+                COPY (
+                    SELECT
+                        '1234567893' AS billing_provider_npi_num,
+                        'T2042' AS hcpcs_code,
+                        DATE '2024-01-01' AS claim_from_month,
+                        10.0 AS total_paid,
+                        2.0 AS total_claim_lines
+                ) TO ? (FORMAT PARQUET)
+                """,
+                [str(saved)],
+            )
+            raw = saved.read_bytes()
+            self.assertTrue(raw.startswith(b"PAR1"))
+            self.assertEqual(file_kind(saved), "parquet")
+            con = connect(settings.db_path)
+            count = ingest_medicaid(con, settings, path=str(saved))
+            self.assertGreaterEqual(count, 1)
+            self.assertEqual(
+                con.execute("SELECT hcpcs FROM facts_medicaid").fetchone()[0],
+                "T2042",
+            )
+            con.close()
+
+            odd = Path(tmp) / "odd.csv"
+            odd.write_bytes(b"name\r\n" + b" " * 37 + b"\x90\r\n")
+            with open_text(odd) as handle:
+                handle.read()
+
+            zipped = Path(tmp) / "nppes.download"
+            import zipfile
+
+            with zipfile.ZipFile(zipped, "w") as archive:
+                archive.writestr("npidata.csv", "NPI\n1234567893\n")
+            extracted = materialize(zipped, Path(tmp) / "unpack")
+            self.assertEqual(extracted.suffix, ".csv")
+            self.assertIn("1234567893", extracted.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

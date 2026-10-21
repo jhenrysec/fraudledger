@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fraud Ledger installer for Ubuntu 24.04.
+# Fraud Ledger installer for one Ubuntu Desktop machine (24.04 or 26.04).
 #   bash install.sh              system install, systemd, demonstration data
 #   bash install.sh --user       virtualenv in this clone, no systemd
 #   bash install.sh --no-demo    skip the fictional fixture
@@ -46,8 +46,9 @@ while [[ $# -gt 0 ]]; do
       cat <<'EOF'
 Usage: bash install.sh [--user] [--no-demo] [--no-start]
 
-Without flags, on Ubuntu, this installs a system virtualenv, a local-only
-systemd service on 127.0.0.1:8088, and the fictional demonstration dataset.
+Without flags, on Ubuntu Desktop 24.04 or 26.04, this installs a system
+virtualenv, a local-only systemd service on 127.0.0.1:8088, and the fictional
+demonstration dataset. Open that address in the desktop browser.
 
   --user      Install into .venv in this clone and start with nohup. No systemd.
   --no-demo   Do not load fictional NPIs.
@@ -111,10 +112,13 @@ PY
 
 install_user() {
   if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
-    echo "Python 3.10 or newer is required." >&2
+    echo "Python 3.10 or newer is required. Ubuntu 26.04 Desktop includes Python 3.14." >&2
     exit 1
   fi
-  python3 -m venv "$ROOT/.venv"
+  if ! python3 -m venv "$ROOT/.venv"; then
+    echo "python3 -m venv failed. On Ubuntu Desktop run: sudo apt install python3-venv" >&2
+    exit 1
+  fi
   "$ROOT/.venv/bin/pip" install --upgrade pip
   "$ROOT/.venv/bin/pip" install "$ROOT"
   mkdir -p "$ROOT/var/logs"
@@ -162,10 +166,22 @@ EOF
 
 install_system() {
   export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    echo "Installing on ${PRETTY_NAME:-unknown}."
+    if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" != "24.04" && "${VERSION_ID:-}" != "26.04" ]]; then
+      echo "Tested on Ubuntu Desktop 24.04 and 26.04. This is ${VERSION_ID}. Continuing."
+    elif [[ "${ID:-}" != "ubuntu" ]]; then
+      echo "Tested on Ubuntu Desktop. This is ${ID:-unknown}. Continuing."
+    fi
+  fi
   apt-get update
-  apt-get install -y python3 python3-venv python3-pip ca-certificates curl
+  apt-get install -y python3 python3-venv ca-certificates curl
   if ! id fraudledger >/dev/null 2>&1; then
-    useradd --system --shell /usr/sbin/nologin --home-dir /nonexistent --no-create-home fraudledger
+    nologin="$(command -v nologin || true)"
+    useradd --system --shell "${nologin:-/usr/sbin/nologin}" --home-dir /nonexistent --no-create-home fraudledger
   fi
   install -d -o fraudledger -g fraudledger -m 0750 \
     /var/lib/fraudledger \
@@ -193,10 +209,16 @@ install_system() {
   systemctl daemon-reload
   systemctl enable fraudledger.service fraudledger-ingest.timer
   if [[ "$NO_DEMO" -eq 0 ]]; then
-    sudo -u fraudledger env FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
+    sudo -u fraudledger env \
+      HOME=/var/lib/fraudledger \
+      XDG_CACHE_HOME=/var/lib/fraudledger/tmp \
+      FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
       /opt/fraudledger/venv/bin/fraudledger demo
   else
-    sudo -u fraudledger env FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
+    sudo -u fraudledger env \
+      HOME=/var/lib/fraudledger \
+      XDG_CACHE_HOME=/var/lib/fraudledger/tmp \
+      FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
       /opt/fraudledger/venv/bin/fraudledger init
   fi
   if [[ "$NO_START" -eq 0 ]]; then

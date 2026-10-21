@@ -4,11 +4,11 @@ Local review workstation for public healthcare billing anomalies. It loads publi
 
 Statistical flags are review leads, not findings of fraud. Excess dollars are a gap versus a peer median, not a loss amount and not a recoverable amount. A person decides whether any lead is worth sending to [america.gov/fraud](https://america.gov/fraud). The Department of Justice Criminal Tip Rewards Pilot is discretionary. This program does not compute a reward.
 
-The review UI binds to `127.0.0.1:8088`. It is an analyst tool for one machine, not a public website.
+The review UI binds to `127.0.0.1:8088`. It is an analyst tool for one desktop, not a public website.
 
 ## Install
 
-Ubuntu 24.04 LTS:
+One Ubuntu Desktop machine, 24.04 LTS or 26.04 LTS:
 
 ```bash
 git clone https://github.com/jhenrysec/fraudledger.git
@@ -16,13 +16,17 @@ cd fraudledger
 bash install.sh
 ```
 
-That command installs Python packages into `/opt/fraudledger/venv`, creates a `fraudledger` system user, writes `/etc/fraudledger/config.yaml` if it is missing, loads a fictional demonstration set, and starts systemd. Open `http://127.0.0.1:8088/` on that machine.
+That uses sudo once. It installs Python packages into `/opt/fraudledger/venv`, creates a `fraudledger` system user, writes `/etc/fraudledger/config.yaml` if it is missing, loads a fictional demonstration set, and starts a systemd service. Then open `http://127.0.0.1:8088/` in the desktop browser. Wayland versus X11 does not matter; this is a local web page.
+
+Ubuntu 26.04 Desktop's default Python is 3.14. The installer uses that interpreter and installs a DuckDB build that already has a 3.14 wheel, so it does not compile a database engine on the machine.
 
 ```bash
 bash install.sh --user       # virtualenv in this clone, no systemd
 bash install.sh --no-demo    # do not load fictional NPIs
 bash install.sh --no-start   # install services but do not start the UI
 ```
+
+The demonstration set, the LEIE, and the hospice or home-health owner files are comfortable on one desktop. The national Medicaid extract is multi-gigabyte. Give that pull a large free disk (hundreds of GB if you keep the raw file and the Parquet) and at least 16 GB of RAM. A smaller desktop can still run the demonstration and the smaller public files.
 
 The `--user` command wires `.venv/bin/fraudledger` at this clone's `var/config.yaml`. The system command uses `/etc/fraudledger/config.yaml` and does not depend on the clone staying on disk.
 

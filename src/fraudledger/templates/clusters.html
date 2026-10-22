@@ -14,7 +14,7 @@
     <tr>
       <th>Group</th>
       <th>What stands out</th>
-      <th>Link</th>
+      <th>Shared owners and addresses</th>
       <th class="num">Owners</th>
       <th class="num">Peer-gap estimate</th>
     </tr>
@@ -27,7 +27,13 @@
         <strong>{{ group.headline }}</strong>
         <br><span class="sub">{{ group.quiet_line }}</span>
       </td>
-      <td>{{ group.link }}</td>
+      <td>
+        {% for line in group.brief %}
+        {{ line }}{% if not loop.last %}<br>{% endif %}
+        {% endfor %}
+        {% if group.more %}<br><a href="/cluster/{{ group.id }}?run={{ run_id }}">{{ group.more }} more</a>{% endif %}
+        {% if not group.brief %}No owner or address is on two or more providers.{% endif %}
+      </td>
       <td class="num">{{ group.owners }}</td>
       <td class="num">{% if group.dollars %}${{ "{:,.0f}".format(group.dollars) }}{% else %}—{% endif %}</td>
     </tr>

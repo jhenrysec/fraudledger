@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
+from fraudledger.graph.links import shared_links, summarize
 from fraudledger.reference import explain_cluster, reader_index
 from fraudledger.report.assemble import DISCLAIMER, _svg
 from fraudledger.reviews import ALLOWED_STATES, PROVIDER_KEY, set_review
@@ -266,7 +267,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [run_row[0]],
             ).fetchall()
-            groups = [{"id": row[0], **explain_cluster(*row[1:])} for row in rows]
+            links = shared_links(connection, run_row[0])
+            groups = []
+            for row in rows:
+                shared = links.get(row[0], {"owners": [], "addresses": []})
+                brief, more = summarize(shared["owners"], shared["addresses"])
+                groups.append(
+                    {
+                        "id": row[0],
+                        **explain_cluster(*row[1:]),
+                        "brief": brief,
+                        "more": more,
+                    }
+                )
             return templates.TemplateResponse(
                 request,
                 "clusters.html",
@@ -312,6 +325,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchall()
             flagged_members = [row for row in members if row[5] is not None]
             quiet_members = [row for row in members if row[5] is None]
+            shared = shared_links(connection, run_row[0]).get(
+                header[0],
+                {"owners": [], "addresses": []},
+            )
             return templates.TemplateResponse(
                 request,
                 "cluster.html",
@@ -324,6 +341,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     flagged_members=flagged_members,
                     quiet_members=quiet_members,
                     owners=owners,
+                    shared_owners=shared["owners"],
+                    shared_addresses=shared["addresses"],
                 ),
             )
 

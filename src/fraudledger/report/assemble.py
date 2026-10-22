@@ -9,6 +9,7 @@ import duckdb
 
 from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.hashing import sha256_file, sha256_text
+from fraudledger.graph.links import shared_links
 from fraudledger.reference import explain_cluster
 from fraudledger.settings import Settings
 
@@ -192,8 +193,10 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         "The count of providers with a billing indicator is the fact to read. "
         "The sort key is not the provider score. On a provider, 8 or more is Critical."
     )
+    links = shared_links(con, run_id)
     for cluster_id, providers, owners, flagged, score, dollars in clusters:
         group = explain_cluster(providers, owners, flagged, score, dollars)
+        shared = links.get(cluster_id, {"owners": [], "addresses": []})
         members = [
             row[0]
             for row in con.execute(
@@ -203,9 +206,19 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         ]
         text_parts.append(
             f"Group {cluster_id}: {group['headline']}. {group['quiet_line']} "
-            f"{group['gap_sentence']} {group['sort_sentence']} "
-            f"Members: {', '.join(members)}"
+            f"{group['gap_sentence']} {group['sort_sentence']}"
         )
+        if not shared["owners"] and not shared["addresses"]:
+            text_parts.append("  No owner or address is on more than one provider in this group.")
+        for owner in shared["owners"]:
+            text_parts.append(
+                f"  Shared owner {owner['name']} ({owner['key']}) is on {owner['provider_count']} providers: {owner['who']}."
+            )
+        for place in shared["addresses"]:
+            text_parts.append(
+                f"  Shared address {place['place']} is on {place['provider_count']} providers: {place['who']}."
+            )
+        text_parts.append(f"  Members: {', '.join(members)}")
 
     narrative = "\n".join(text_parts) + "\n"
     for banned in BANNED:

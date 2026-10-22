@@ -6,9 +6,49 @@
 <section class="card">
   <p><strong>{{ group.headline }}</strong></p>
   <p>{{ group.quiet_line }}</p>
-  <p>{{ group.owners }} owners. Link: {{ group.link }}.</p>
+  <p>The names below are the owners and street addresses on more than one provider in this group. That is the link. {{ group.owners }} owners are attached in total; an owner of only one provider is not repeated here.</p>
   <p>{{ group.gap_sentence }}</p>
   <p>The provider score in the table is the one to use. 8 or more is Critical, 5 is High, and 3 is Elevated. Providers with an indicator are listed first.</p>
+</section>
+<section class="card">
+  <h2>Shared owners</h2>
+  <p class="sub">The same associate id on at least two providers in this group. One person with several roles is still one owner.</p>
+  {% if shared_owners %}
+  <table>
+    <thead><tr><th>Owner</th><th class="num">Providers in this group</th><th>Which providers</th></tr></thead>
+    <tbody>
+      {% for owner in shared_owners %}
+      <tr>
+        <td>{{ owner.name }}<br><span class="mono">{{ owner.key }}</span></td>
+        <td class="num">{{ owner.provider_count }}</td>
+        <td>{{ owner.who }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No owner is on more than one provider in this group.</p>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>Shared addresses</h2>
+  <p class="sub">The same street, city, and state on at least two providers in this group. An address is used as a link in the group math when at least three providers in the directory use it.</p>
+  {% if shared_addresses %}
+  <table>
+    <thead><tr><th>Address</th><th class="num">Providers in this group</th><th>Which providers</th></tr></thead>
+    <tbody>
+      {% for place in shared_addresses %}
+      <tr>
+        <td>{{ place.place }}</td>
+        <td class="num">{{ place.provider_count }}</td>
+        <td>{{ place.who }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No street address is shared by two providers in this group.</p>
+  {% endif %}
 </section>
 <section class="card">
   <h2>Providers with a billing indicator</h2>
@@ -53,7 +93,7 @@
   <p>{{ group.sort_sentence }}</p>
 </details>
 <details class="card">
-  <summary>{{ group.owners }} owner rows</summary>
+  <summary>Every owner role, including owners of only one provider</summary>
   <p class="sub">The same owner can appear once per role. Do not add the percents. <a href="/index#ownership">How to read a percent</a>.</p>
   <table>
     <thead><tr><th>Associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th></tr></thead>

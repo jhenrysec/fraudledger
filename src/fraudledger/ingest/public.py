@@ -81,7 +81,8 @@ def ingest_medicaid(
     servicing_sql = f'"{servicing}"' if servicing else "NULL"
     beneficiaries_sql = f'"{beneficiaries}"' if beneficiaries else "NULL"
     month_expr = _as_month(mapping["month"])
-    where = f"\nWHERE {month_expr} IS NOT NULL"
+    billing_text = f"trim(CAST(\"{mapping['billing_npi']}\" AS VARCHAR))"
+    where = f"\nWHERE {month_expr} IS NOT NULL\n  AND {billing_text} <> ''"
     if focus == "priority":
         from fraudledger.ingest.focus import priority_in_list
 

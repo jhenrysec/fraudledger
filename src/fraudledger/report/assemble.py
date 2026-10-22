@@ -21,6 +21,10 @@ DISCLAIMER = (
 )
 
 
+def _esc(value: object) -> str:
+    return escape("" if value is None else str(value))
+
+
 def _svg(points: list[tuple[str, float]]) -> str:
     if not points:
         return ""
@@ -48,10 +52,12 @@ def _finding_block(name: str, key: str, score: float, tier: str, rules: str, exc
         f"Sum of peer-gap estimates: ${excess:,.0f}." if excess else "No dollar peer-gap on these rules.",
     ]
     for rule_id, metric, threshold, peer, dollars, detail in flags:
+        metric_text = f"{float(metric):.4g}" if metric is not None else "n/a"
+        threshold_text = f"{float(threshold):.4g}" if threshold is not None else "n/a"
         lines.append(
-            f"- {rule_id}: metric {metric:.4g} vs threshold {threshold:.4g}"
-            + (f", peer {peer:.4g}" if peer is not None else "")
-            + (f", peer-gap ${dollars:,.0f}" if dollars else "")
+            f"- {rule_id}: metric {metric_text} vs threshold {threshold_text}"
+            + (f", peer {float(peer):.4g}" if peer is not None else "")
+            + (f", peer-gap ${float(dollars):,.0f}" if dollars else "")
         )
         lines.append(f"  {detail}")
     return "\n".join(lines)
@@ -105,6 +111,8 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
 
     html_findings = []
     for key, name, city, state, score, tier, rules, excess in findings:
+        if not key:
+            continue
         flags = con.execute(
             """
             SELECT rule_id, metric_value, threshold, peer_value, excess_dollars, detail_json
@@ -139,28 +147,28 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
                 [key],
             ).fetchall()
             writer.writerows(detail_rows)
-        display = name or key
+        display = str(name or key)
         place = ", ".join(part for part in (city, state) if part)
         text_parts.append("")
         text_parts.append(_finding_block(display, key, score, tier, rules, excess or 0, flags))
         rows_html = "".join(
-            "<li><code>{}</code> metric {:.4g}, threshold {:.4g}{}</li>".format(
-                escape(rule_id),
-                metric or 0,
-                threshold or 0,
-                f", peer-gap ${dollars:,.0f}" if dollars else "",
+            "<li><code>{}</code> metric {}, threshold {}{}</li>".format(
+                _esc(rule_id),
+                f"{float(metric):.4g}" if metric is not None else "n/a",
+                f"{float(threshold):.4g}" if threshold is not None else "n/a",
+                f", peer-gap ${float(dollars):,.0f}" if dollars else "",
             )
             for rule_id, metric, threshold, _peer, dollars, _detail in flags
         )
         html_findings.append(
             f"""
-            <article class="finding tier-{escape(tier).lower()}">
+            <article class="finding tier-{_esc(tier).lower()}">
               <header>
-                <span class="badge">{escape(tier)}</span>
-                <h3>{escape(display)}</h3>
-                <p class="meta">{escape(key)} · {escape(place)} · score {score:.1f}</p>
+                <span class="badge">{_esc(tier)}</span>
+                <h3>{_esc(display)}</h3>
+                <p class="meta">{_esc(key)} · {_esc(place)} · score {float(score or 0):.1f}</p>
               </header>
-              <p>Rules: {escape(rules or "")}. Peer-gap estimate ${excess or 0:,.0f}.</p>
+              <p>Rules: {_esc(rules or "")}. Peer-gap estimate ${float(excess or 0):,.0f}.</p>
               {_svg([(str(month), float(paid or 0)) for month, paid in monthly])}
               <ul>{rows_html}</ul>
             </article>

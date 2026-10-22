@@ -588,6 +588,38 @@ class PublicReportTests(unittest.TestCase):
             self.assertNotIn("R07", flags)
             self.assertNotIn("R08", flags)
 
+    def test_missing_provider_name_does_not_stop_the_report(self) -> None:
+        from fraudledger.report.assemble import write_report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            path = Path(tmp) / "named.csv"
+            path.write_text(
+                "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+                ",T2042,2024-04,9000000,20\n"
+                "1234567893,T2042,2024-04,15,1\n",
+                encoding="utf-8",
+            )
+            con = connect(settings.db_path)
+            ingest_medicaid(con, settings, path=str(path), focus="priority")
+            blank = con.execute(
+                "SELECT COUNT(*) FROM facts_medicaid WHERE billing_npi IS NULL OR trim(billing_npi) = ''"
+            ).fetchone()[0]
+            run_id = execute_run(con, settings, run_id="NAME")
+            con.execute(
+                """
+                INSERT INTO scores (run_id, provider_key, score, tier, flag_count, excess_dollars, rules)
+                VALUES (?, NULL, 20, 'High', 1, 0, 'R05')
+                """,
+                [run_id],
+            )
+            report = write_report(con, settings, run_id)
+            con.close()
+            self.assertEqual(blank, 0)
+            self.assertTrue((report / "report.txt").is_file())
+            self.assertNotIn("NoneType", (report / "report.txt").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,7 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
             SUM(claim_lines) AS claim_lines,
             CASE WHEN SUM(claim_lines) > 0 THEN SUM(paid) / SUM(claim_lines) ELSE NULL END AS rate
         FROM facts_medicaid
+        WHERE billing_npi IS NOT NULL AND trim(billing_npi) <> ''
         GROUP BY 1, 2
         """
     )
@@ -72,6 +73,7 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
         SELECT billing_npi AS provider_key, month, SUM(paid) AS paid,
                SUM(claim_lines) AS claim_lines, MAX(beneficiaries) AS beneficiaries
         FROM facts_medicaid
+        WHERE billing_npi IS NOT NULL AND trim(billing_npi) <> ''
         GROUP BY 1, 2
         """
     )

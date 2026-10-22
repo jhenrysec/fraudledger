@@ -91,6 +91,7 @@ def ingest_medicaid(
     elif focus:
         raise SystemExit("Unknown focus. Use priority, or omit it to keep every procedure code.")
     out = settings.data_dir / "parquet" / "facts" / f"medicaid_{digest[:16]}.parquet"
+    partial = out.with_name(out.name + ".partial")
     select = f"""
         SELECT
             lpad(CAST("{mapping['billing_npi']}" AS VARCHAR), 10, '0') AS billing_npi,
@@ -103,10 +104,16 @@ def ingest_medicaid(
             'public' AS origin
         FROM {reader}{where}
     """
-    if file_kind(readable) == "parquet":
-        con.execute(f"COPY ({select}) TO {_sql_path(out)} (FORMAT PARQUET)")
-    else:
-        con.execute(f"COPY ({select}) TO {_sql_path(out)} (FORMAT PARQUET)", [str(readable)])
+    try:
+        if file_kind(readable) == "parquet":
+            con.execute(f"COPY ({select}) TO {_sql_path(partial)} (FORMAT PARQUET)")
+        else:
+            con.execute(f"COPY ({select}) TO {_sql_path(partial)} (FORMAT PARQUET)", [str(readable)])
+        partial.replace(out)
+    except Exception:
+        if partial.exists():
+            partial.unlink()
+        raise
     if drop_demo:
         from fraudledger.ingest.demo import purge_demo
 

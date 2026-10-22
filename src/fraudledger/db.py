@@ -153,20 +153,35 @@ def refresh_facts_view(con: duckdb.DuckDBPyConnection, parquet_dir: Path) -> int
     if not files:
         con.execute(empty)
         return 0
-    listing = ", ".join("'" + path.as_posix().replace("'", "''") + "'" for path in files)
-    con.execute(
-        f"""
-        CREATE OR REPLACE VIEW facts_medicaid AS
-        SELECT
-            billing_npi::VARCHAR AS billing_npi,
-            servicing_npi::VARCHAR AS servicing_npi,
-            hcpcs::VARCHAR AS hcpcs,
-            CAST(month AS DATE) AS month,
-            beneficiaries::DOUBLE AS beneficiaries,
-            claim_lines::DOUBLE AS claim_lines,
-            paid::DOUBLE AS paid,
-            origin::VARCHAR AS origin
-        FROM read_parquet([{listing}])
-        """
-    )
-    return len(files)
+    readable: list[Path] = []
+    for path in files:
+        try:
+            con.execute("SELECT 1 FROM read_parquet(?) LIMIT 1", [str(path)])
+        except Exception:
+            path.replace(path.with_name(path.name + ".unreadable"))
+            continue
+        readable.append(path)
+    if not readable:
+        con.execute(empty)
+        return 0
+    listing = ", ".join("'" + path.as_posix().replace("'", "''") + "'" for path in readable)
+    try:
+        con.execute(
+            f"""
+            CREATE OR REPLACE VIEW facts_medicaid AS
+            SELECT
+                billing_npi::VARCHAR AS billing_npi,
+                servicing_npi::VARCHAR AS servicing_npi,
+                hcpcs::VARCHAR AS hcpcs,
+                CAST(month AS DATE) AS month,
+                beneficiaries::DOUBLE AS beneficiaries,
+                claim_lines::DOUBLE AS claim_lines,
+                paid::DOUBLE AS paid,
+                origin::VARCHAR AS origin
+            FROM read_parquet([{listing}])
+            """
+        )
+    except Exception:
+        con.execute(empty)
+        return 0
+    return len(readable)

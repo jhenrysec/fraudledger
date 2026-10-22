@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 import threading
+import traceback
 from contextvars import ContextVar
+from html import escape
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -455,8 +457,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"running": False, "message": "", "error": "", "percent": None, "received_label": ""}
         try:
             data = json.loads(status_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {"running": False, "message": "", "error": ""}
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {"running": False, "message": "", "error": "", "percent": None, "received_label": ""}
         return {
             "running": bool(data.get("running")),
             "message": str(data.get("message") or ""),
@@ -668,17 +670,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         call(write)
         return RedirectResponse("/", status_code=303)
 
+    @app.exception_handler(Exception)
+    async def unhandled(request: Request, exc: Exception):
+        log = settings.data_dir / "logs" / "server.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(traceback.format_exc())
+            handle.write("\n")
+        if request.url.path == "/health" or "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"detail": f"{type(exc).__name__}: {exc}"}, status_code=500)
+        text = escape(f"{type(exc).__name__}: {exc}")
+        body = (
+            "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'><title>Fraud Ledger</title></head>"
+            "<body style='font-family:sans-serif;background:#f4f6f8;color:#142033;padding:40px;'>"
+            "<p><a href='/'>Fraud Ledger</a></p><h1>Something broke while drawing this page</h1>"
+            f"<p>{text}</p><p>The same detail is in the server log. The home health rows already loaded are still in the database.</p>"
+            "</body></html>"
+        )
+        return HTMLResponse(body, status_code=500)
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
         if request.url.path == "/health" or "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-        body = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Fraud Ledger</title></head>
-<body style="font-family: sans-serif; background:#f4f6f8; color:#142033; padding:40px;">
-<p><a href="/">Fraud Ledger</a></p>
-<h1>{exc.status_code}</h1>
-<p>{exc.detail}</p>
-</body></html>"""
+        detail = escape(str(exc.detail))
+        body = (
+            "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'><title>Fraud Ledger</title></head>"
+            "<body style='font-family:sans-serif;background:#f4f6f8;color:#142033;padding:40px;'>"
+            "<p><a href='/'>Fraud Ledger</a></p>"
+            f"<h1>{exc.status_code}</h1><p>{detail}</p></body></html>"
+        )
         return HTMLResponse(body, status_code=exc.status_code)
 
     return app

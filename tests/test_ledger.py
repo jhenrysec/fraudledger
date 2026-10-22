@@ -309,6 +309,13 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn("database", page.text.lower())
             self.assertNotIn("fraudster", page.text.lower())
+            broken = Path(tmp) / "parquet" / "facts" / "broken.parquet"
+            broken.parent.mkdir(parents=True, exist_ok=True)
+            broken.write_bytes(b"PAR1 this is not a parquet file")
+            again = client.get("/")
+            self.assertEqual(again.status_code, 200)
+            self.assertIn("Review queue", again.text)
+            self.assertFalse(broken.exists())
 
 
 class CatalogTests(unittest.TestCase):

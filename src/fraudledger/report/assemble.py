@@ -161,7 +161,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
                 <p class="meta">{escape(key)} · {escape(place)} · score {score:.1f}</p>
               </header>
               <p>Rules: {escape(rules or "")}. Peer-gap estimate ${excess or 0:,.0f}.</p>
-              {_svg([(str(month), float(paid)) for month, paid in monthly])}
+              {_svg([(str(month), float(paid or 0)) for month, paid in monthly])}
               <ul>{rows_html}</ul>
             </article>
             """

@@ -569,6 +569,25 @@ class PublicReportTests(unittest.TestCase):
             con.close()
             self.assertEqual(rows, [(date(2024, 4, 1), 80.0)])
 
+    def test_zero_prior_year_does_not_stop_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            path = Path(tmp) / "yoy.csv"
+            path.write_text(
+                "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+                "1234567893,T2042,2023-01,0,1\n"
+                "1234567893,T2042,2024-04,2000000,10\n",
+                encoding="utf-8",
+            )
+            con = connect(settings.db_path)
+            ingest_medicaid(con, settings, path=str(path), focus="priority")
+            run_id = execute_run(con, settings, run_id="ZERO")
+            flags = flags_for(con, run_id, "1234567893")
+            con.close()
+            self.assertNotIn("R07", flags)
+            self.assertNotIn("R08", flags)
+
 
 if __name__ == "__main__":
     unittest.main()

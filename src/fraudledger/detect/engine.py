@@ -296,6 +296,9 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
                (paid - prior_paid) / NULLIF(prior_paid, 0) AS growth
         FROM ranked
         WHERE prior_year = year - 1
+          AND paid IS NOT NULL
+          AND prior_paid IS NOT NULL
+          AND prior_paid <> 0
           AND year = (SELECT MAX(year) FROM agg_year y2 WHERE y2.provider_key = ranked.provider_key)
         """
     ).fetchall()
@@ -306,6 +309,11 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
     swing_rows = []
     boom_rows = []
     for key, year, paid, prior_year, prior_paid, growth in yoy:
+        if None in (growth, paid, prior_paid, year, prior_year):
+            continue
+        paid = float(paid)
+        prior_paid = float(prior_paid)
+        growth = float(growth)
         change = paid - prior_paid
         detail = {
             "year": int(year),

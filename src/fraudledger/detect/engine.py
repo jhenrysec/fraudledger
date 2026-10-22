@@ -8,6 +8,8 @@ from fraudledger.ingest.focus import HOSPICE_HCPCS
 from fraudledger.settings import Settings
 
 HOSPICE_TAXONOMY = ("251G00000X", "315D00000X")
+# A paid jump is not flagged when patient growth is at least this share of the paid growth.
+CENSUS_SHARE = 0.75
 
 RULE_BLURB = {
     "R01": "Paid per claim line is more than the configured multiple of the national median for that HCPCS, with enough dollars to matter.",
@@ -55,7 +57,7 @@ def _census_explains(paid_growth: float, beneficiaries, prior_beneficiaries) -> 
     prior = float(prior_beneficiaries)
     if prior <= 0:
         return False
-    return (float(beneficiaries) - prior) / prior >= paid_growth * 0.75
+    return (float(beneficiaries) - prior) / prior >= paid_growth * CENSUS_SHARE
 
 
 def _insert(con: duckdb.DuckDBPyConnection, run_id: str, rows: list[tuple]) -> None:

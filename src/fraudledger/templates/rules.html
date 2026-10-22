@@ -2,7 +2,7 @@
 {% block title %}Rules · Fraud Ledger{% endblock %}
 {% block body %}
 <h1>Detection rules</h1>
-<p class="sub">Config SHA-256 <span class="mono">{{ config_sha }}</span>. Thresholds travel with every run. Rules are not mutually exclusive.</p>
+<p class="sub">Config SHA-256 <span class="mono">{{ config_sha }}</span>. Thresholds travel with every run. Rules are not mutually exclusive. <a href="/index#score">How the score is calculated</a>.</p>
 {% for rule in catalog %}
 <article class="card">
   <h2><span class="mono">{{ rule.id }}</span> {{ rule.title }} <span class="badge">weight {{ rule.weight }}</span></h2>

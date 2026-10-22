@@ -4,6 +4,9 @@ import duckdb
 
 from fraudledger.settings import Settings
 
+# Added on top of R11's own weight. R13 does not receive it.
+R11_BONUS = 3.0
+
 
 def tier_for(score: float, rules: set[str], settings: Settings) -> str:
     if "R11" in rules or score >= settings.tier_critical:
@@ -61,7 +64,7 @@ def write_scores(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         if len(rules) >= settings.multi_flag_min:
             score += settings.multi_flag_bonus
         if "R11" in rules:
-            score += 3.0
+            score += R11_BONUS
         if mates.get(key):
             score += settings.cluster_bonus
         ordered = ",".join(sorted(rules))

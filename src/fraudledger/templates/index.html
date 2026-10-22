@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}How to read this · Fraud Ledger{% endblock %}
+{% block body %}
+<h1>How to read this</h1>
+<p class="sub">A score puts a provider higher or lower in the queue. It is not a probability, not a dollar amount, and not a decision that anyone did anything wrong. Config SHA-256 <span class="mono">{{ index.config_sha }}</span>.</p>
+<p>
+  <a href="#score">Score</a> ·
+  <a href="#indicators">Indicators</a> ·
+  <a href="#ownership">Ownership edges</a> ·
+  <a href="#roles">Role codes</a> ·
+  <a href="#processing">What the loader changed</a> ·
+  <a href="#sources">Federal sources</a>
+</p>
+
+<section class="card" id="score">
+  <h2>Score</h2>
+  <p>Each indicator has a weight. The score adds the weight once per distinct indicator, then adds the bonuses below. Peer-gap dollars are not part of the score.</p>
+  <p class="mono">score = sum of distinct indicator weights<br>
+    + {{ "%.1f"|format(index.multi_flag_bonus) }} if at least {{ index.multi_flag_min }} distinct indicators fired<br>
+    + {{ "%.1f"|format(index.r11_extra) }} if R11 fired<br>
+    + {{ "%.1f"|format(index.cluster_bonus) }} if this provider is flagged and another flagged provider is in the same cluster</p>
+  <table>
+    <thead><tr><th>Tier</th><th>Meaning</th><th>When it is used</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Critical</td>
+        <td>Open this first.</td>
+        <td>R11 fired, or the score is at least {{ "%g"|format(index.tier_critical) }}.</td>
+      </tr>
+      <tr>
+        <td>High</td>
+        <td>Several indicators, or one heavy one, stacked up.</td>
+        <td>Score is at least {{ "%g"|format(index.tier_high) }}, and it is not already Critical.</td>
+      </tr>
+      <tr>
+        <td>Elevated</td>
+        <td>Above the noise floor. Still a lead, not a conclusion.</td>
+        <td>Score is at least {{ "%g"|format(index.tier_elevated) }}.</td>
+      </tr>
+      <tr>
+        <td>Monitor</td>
+        <td>Something fired, but not enough to sort above the rest.</td>
+        <td>Score is above 0 and below Elevated.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>R11 is the billing NPI on the OIG exclusion list with a payment on or after the exclusion date. Its own weight is already in the sum. The extra {{ "%.1f"|format(index.r11_extra) }} is added only for R11. With the default R11 weight of 5, that extra alone reaches the Critical cutoff. R13 is a separate owner name-and-state match. It does not get that extra, and it is not Critical by itself.</p>
+  <p>The cluster bonus is not “this provider has an owner.” It applies only when two or more flagged providers sit in the same ownership community.</p>
+  <p>For a cost outlier, the peer-gap shown beside the score is <span class="mono">(paid per line − national median) × claim lines</span>. That is a gap versus other billers of the same code. It is not a loss amount and not an amount to type on an intake form.</p>
+</section>
+
+<section class="card" id="indicators">
+  <h2>Indicators</h2>
+  <p>Indicators are not mutually exclusive. A provider can carry several at once. R01 and R02 skip a procedure code when fewer than {{ index.min_peer_n }} providers billed it. The <a href="/rules">Rules</a> page repeats these cutoffs next to the config hash for the run.</p>
+  <table>
+    <thead><tr><th>Code</th><th>Name</th><th class="num">Weight</th><th>What it means</th><th>Cutoff in this config</th></tr></thead>
+    <tbody>
+      {% for rule in index.rules %}
+      <tr>
+        <td class="mono">{{ rule.id }}</td>
+        <td>{{ rule.title }}</td>
+        <td class="num">{{ rule.weight }}</td>
+        <td>{{ rule.meaning }}</td>
+        <td>{{ rule.cutoff }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card" id="ownership">
+  <h2>Ownership edges</h2>
+  <p>An ownership edge is one link: this provider, one PECOS associate, and one role. It is not one person, and it is not one slice of a pie. The same associate stays one owner when the name repeats.</p>
+  <table>
+    <thead><tr><th>Column</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>Owner id</td><td>PECOS associate id (<span class="mono">ASSOCIATE ID – OWNER</span>). Not an NPI. People and companies both have one.</td></tr>
+      <tr><td>Name</td><td>The organization name, or the person’s first and last name, from that same row.</td></tr>
+      <tr><td>Role</td><td>The CMS role code for this row only. The codes are in the next section.</td></tr>
+      <tr><td>Percent</td><td>The percent CMS stored on that role row. It is often copied onto the officer and director rows for the same stake.</td></tr>
+      <tr><td>Weight</td><td><span class="mono">role strength × percent / 100</span>. Used only to group related providers. Not a share. Do not add the weight column.</td></tr>
+      <tr><td>Origin</td><td><span class="mono">public:home-health-owners</span> or <span class="mono">public:hospice-owners</span>, the file the row came from.</td></tr>
+    </tbody>
+  </table>
+  <h3>Why the same name appears more than once</h3>
+  <p>CMS files a separate row for every role it requires the enrollment to disclose. A person who owns 51% and is also an officer and a director is three rows, all at 51%. Those are not three stakes.</p>
+  <h3>Why the percents add up past 100%</h3>
+  <p>They are different layers. Add them only inside one layer, and only once per owner.</p>
+  <ul>
+    <li><strong>Direct (role 34).</strong> Equity in this provider. One owner at 100% is a complete direct total. Several direct owners should generally add to about 100%. Count each associate once. If the same associate has two role 34 rows, do not count both.</li>
+    <li><strong>Indirect (role 35).</strong> Equity in a company that owns this provider. A 51% row and a 49% row can be a complete indirect layer. Do not add that 100% on top of the direct owner’s 100%.</li>
+    <li><strong>Control roles (officer, director, partner, managing employee).</strong> Medicare requires these even when the person is already listed as an owner. The percent is usually the same stake again. Leave them out of the total.</li>
+  </ul>
+  <p>A worked weight, using the strengths in this config:</p>
+  <table>
+    <thead><tr><th>Role</th><th class="num">Percent</th><th class="num">Strength</th><th class="num">Weight</th></tr></thead>
+    <tbody>
+      {% for row in index.examples %}
+      <tr>
+        <td class="mono">{{ row.code }}</td>
+        <td class="num">{{ row.percent }}</td>
+        <td class="num">{{ row.strength }}</td>
+        <td class="num">{{ row.weight }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>A blank percent is treated as {{ "%g"|format(index.min_ownership_pct) }} only inside that weight formula, so a control role with no percent still has a small link. The percent cell on the provider page stays blank.</p>
+  <p>A row is kept when its percent is at least {{ "%g"|format(index.min_ownership_pct) }}, or when its role is a control role. “Ownership edges kept” is this filtered set. It is not a count of owners, and it is not a count of companies.</p>
+</section>
+
+<section class="card" id="roles">
+  <h2>Role codes</h2>
+  <p>The description column is the CMS owner role-code table. The last two columns are what this workstation does with that code.</p>
+  <table>
+    <thead><tr><th>Code</th><th>CMS description</th><th>How to read it</th><th class="num">Strength</th><th>Kept under {{ "%g"|format(index.min_ownership_pct) }}%?</th></tr></thead>
+    <tbody>
+      {% for role in index.roles %}
+      <tr>
+        <td class="mono">{{ role.code }}</td>
+        <td>{{ role.cms }}</td>
+        <td>{{ role.how }}</td>
+        <td class="num">{{ role.strength }}</td>
+        <td>{{ role.kept }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>A code that is not in this table uses strength {{ "%.1f"|format(index.default_role_strength) }} unless the config sets one, and it is kept only at the percent floor. Role strength is not a CMS field. CMS does not publish this score.</p>
+</section>
+
+<section class="card" id="processing">
+  <h2>What the loader changed</h2>
+  <ul>
+    <li>The owner file is keyed by enrollment id. Each NPI on that enrollment receives a copy of the owner row. A provider page shows the rows for that NPI only.</li>
+    <li>Medicaid <span class="mono">TOTAL_PATIENTS</span> is stored as the beneficiary count. Counts are not added across months. Rules that need a patient count use the busiest month, or the average month inside a year for the growth test.</li>
+    <li>Year-over-year growth is <span class="mono">(this year paid − prior year paid) / prior year paid</span>. If the prior year paid nothing, growth is not computed and the jump is not flagged.</li>
+    <li>A payment jump is dropped from R07 and R08 when both years have a patient count and the patient count grew at least {{ "%g"|format(index.census_share * 100) }}% as fast as the dollars.</li>
+    <li>R05 and R06 do not flag a provider whose taxonomy is {{ index.hospice_taxonomy }} and whose billed codes are all hospice codes. A home-health taxonomy billing one hospice code is still eligible.</li>
+    <li>R09 and R10 use the incorporation date from the enrollment file when that file has one. That date is not a Medicare enrollment date. An old company with a new enrollment keeps the incorporation date, and falls back to the NPPES enumeration date only when incorporation is missing.</li>
+    <li>R13 matches an owner to the exclusion list on exact first name, last name, and state. The agency name is not compared. The match does not get the R11 bonus.</li>
+    <li>R14 and R15 use the Medicare post-acute provider file. The join is the last six digits of the enrollment CCN. The provider is compared with the median of other providers in that file, not with the Medicaid paid amount.</li>
+  </ul>
+</section>
+
+<section class="card" id="sources">
+  <h2>Federal sources</h2>
+  <p>No CMS or Department of Justice form defines this score or tells you how to lay it out. Two federal sources do govern the words and the ownership arithmetic. The intake site does not publish an analytical template.</p>
+  <table>
+    <thead><tr><th>Source</th><th>What it governs here</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><a href="https://www.plainlanguage.gov/guidelines/">Federal Plain Language Guidelines</a></td>
+        <td>Written for the Plain Writing Act of 2010 (Public Law 111-274). Put the point first, use headings, define the terms, and use a table when the reader has to look up a code. This page follows that. The guidelines do not specify a report layout for a billing lead.</td>
+      </tr>
+      <tr>
+        <td><a href="https://data.cms.gov/sites/default/files/2026-07/Hospital_Data_Guidance.pdf">Medicare Fee-For-Service Provider Enrollment — Hospital: Data Guidance</a>, version 1.6, July 2026</td>
+        <td>Direct ownership is equity in the capital, the stock, or the profits of the disclosing entity. Indirect ownership is equity in an entity that owns the disclosing entity. Sum role 34 once per associate. That direct total should generally be about 100%. Do not add a second enrollment’s copy of the same owner. The SNF guidance for the same release says the same thing. Home health and hospice owner files use this PECOS layout.</td>
+      </tr>
+      <tr>
+        <td><a href="https://data.cms.gov/sites/default/files/2026-07/Hospital_All_Owners_Data_Dictionary.pdf">Hospital All Owners data dictionary</a>, July 2026</td>
+        <td>The role-code table in the section above. <span class="mono">ASSOCIATE ID – OWNER</span> is the owner key. <span class="mono">PERCENTAGE OWNERSHIP</span> is the percent on that row.</td>
+      </tr>
+      <tr>
+        <td><a href="https://america.gov/fraud">america.gov/fraud</a></td>
+        <td>Where a person files, if they decide a lead is worth filing. This program does not file it and does not compute a reward. Do not type a peer-gap figure in as money taken.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}

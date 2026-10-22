@@ -10,6 +10,7 @@ from pathlib import Path
 import duckdb
 
 from fraudledger.detect.engine import RULE_BLURB
+from fraudledger.reference import reading_notes
 from fraudledger.report.assemble import BANNED, DISCLAIMER, _pdf
 from fraudledger.reviews import PROVIDER_KEY
 from fraudledger.settings import Settings
@@ -218,6 +219,8 @@ def build_packet(
     for source_id, url, retrieved, digest, nbytes in snapshots:
         lines.append(f"{source_id} retrieved {retrieved} bytes {nbytes} sha256 {digest}")
         lines.append(f"  {url}")
+    lines.append("")
+    lines.append(reading_notes(settings))
     lines.append("")
     lines.append("How a person files this")
     lines.append(f"1. Open {INTAKE} and use the signed intake. This program cannot file it for you.")

@@ -4,7 +4,7 @@ Local review workstation for public healthcare billing anomalies. It loads publi
 
 Statistical flags are review leads, not findings of fraud. Excess dollars are a gap versus a peer median, not a loss amount and not a recoverable amount. A person decides whether any lead is worth sending to [america.gov/fraud](https://america.gov/fraud). The Department of Justice Criminal Tip Rewards Pilot is discretionary. This program does not compute a reward.
 
-The review UI binds to `127.0.0.1:8088`. It is an analyst tool for one desktop, not a public website.
+The review UI binds to `127.0.0.1:8088`. It is an analyst tool for one desktop, not a public website. Open `http://127.0.0.1:8088/index` for the score formula, the ownership role codes, and the CMS rule for totaling a percent.
 
 ## Install
 

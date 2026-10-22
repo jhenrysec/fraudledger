@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
+from fraudledger.reference import reader_index
 from fraudledger.report.assemble import DISCLAIMER, _svg
 from fraudledger.reviews import ALLOWED_STATES, PROVIDER_KEY, set_review
 from fraudledger.settings import Settings, load_settings
@@ -342,6 +343,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request,
                 "rules.html",
                 shell(request, connection, run_row, catalog=catalog, config_sha=settings.config_sha256),
+            )
+
+        return call(read)
+
+    @app.get("/index", response_class=HTMLResponse)
+    def reader(request: Request):
+        def read(connection):
+            run_row = connection.execute(
+                """
+                SELECT run_id, demo_only FROM runs
+                WHERE status = 'succeeded'
+                ORDER BY started_at DESC LIMIT 1
+                """
+            ).fetchone()
+            return templates.TemplateResponse(
+                request,
+                "index.html",
+                shell(request, connection, run_row, index=reader_index(settings)),
             )
 
         return call(read)

@@ -329,6 +329,31 @@ class ApiTests(unittest.TestCase):
             self.assertFalse(broken.exists())
 
 
+class ReaderIndexTests(unittest.TestCase):
+    def test_index_explains_score_and_role_codes(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from fraudledger.api.app import create_app
+        from fraudledger.reference import reading_notes
+        from fraudledger.report.assemble import BANNED
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            client = TestClient(create_app(settings))
+            page = client.get("/index")
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("5% or greater direct ownership interest", page.text)
+            self.assertIn("Do not add it to role 34", page.text)
+            self.assertIn("How to read", page.text)
+            self.assertIn("role strength", page.text)
+            notes = reading_notes(settings)
+            self.assertIn("Add role 34 once per owner", notes)
+            self.assertIn("at least 8", notes)
+            lowered = (page.text + notes).lower()
+            for phrase in BANNED:
+                self.assertNotIn(phrase, lowered)
+
+
 class CatalogTests(unittest.TestCase):
     def test_medicaid_prefers_latest_parquet(self) -> None:
         from fraudledger.ingest.catalog import medicaid_url_from_html

@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
-from fraudledger.reference import reader_index
+from fraudledger.reference import explain_cluster, reader_index
 from fraudledger.report.assemble import DISCLAIMER, _svg
 from fraudledger.reviews import ALLOWED_STATES, PROVIDER_KEY, set_review
 from fraudledger.settings import Settings, load_settings
@@ -266,10 +266,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [run_row[0]],
             ).fetchall()
+            groups = [{"id": row[0], **explain_cluster(*row[1:])} for row in rows]
             return templates.TemplateResponse(
                 request,
                 "clusters.html",
-                shell(request, connection, run_row, rows=rows),
+                shell(request, connection, run_row, groups=groups),
             )
 
         return call(read)
@@ -309,10 +310,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [run_row[0], cluster_id],
             ).fetchall()
+            flagged_members = [row for row in members if row[5] is not None]
+            quiet_members = [row for row in members if row[5] is None]
             return templates.TemplateResponse(
                 request,
                 "cluster.html",
-                shell(request, connection, run_row, header=header, members=members, owners=owners),
+                shell(
+                    request,
+                    connection,
+                    run_row,
+                    group_id=header[0],
+                    group=explain_cluster(*header[1:]),
+                    flagged_members=flagged_members,
+                    quiet_members=quiet_members,
+                    owners=owners,
+                ),
             )
 
         return call(read)

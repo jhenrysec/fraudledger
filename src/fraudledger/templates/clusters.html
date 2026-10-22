@@ -1,32 +1,40 @@
 {% extends "base.html" %}
-{% block title %}Clusters · Fraud Ledger{% endblock %}
+{% block title %}Ownership groups · Fraud Ledger{% endblock %}
 {% block body %}
-<h1>Ownership clusters</h1>
-<p class="sub">Run <span class="mono">{{ run_id }}</span>. Communities with fewer than two providers are dropped. A cluster is a grouping, not a finding.</p>
+<h1>Ownership groups</h1>
+<p class="sub">Run <span class="mono">{{ run_id }}</span>. Ordered by how many linked providers have a billing indicator.</p>
+<section class="card">
+  <h2>What this list is highlighting</h2>
+  <p>A group is providers connected by a shared owner, or by the same street address when at least three providers use it. The group number is an id, not a rank.</p>
+  <p>Read the count of providers that have a billing indicator. Everyone else is in the group only because of that link. A group of several hundred is usually a corporate family, not one lead.</p>
+  <p>Open the group and use each provider’s own score. On a provider, 8 or more is Critical, 5 is High, and 3 is Elevated. A group sort key in the hundreds is not that score. <a href="/index#groups">How a group differs from a provider score</a>.</p>
+</section>
 <table>
   <thead>
     <tr>
-      <th>Cluster</th>
-      <th class="num">Providers</th>
+      <th>Group</th>
+      <th>What stands out</th>
+      <th>Link</th>
       <th class="num">Owners</th>
-      <th class="num">Flagged</th>
-      <th class="num">Score</th>
-      <th class="num">Peer gap</th>
+      <th class="num">Peer-gap estimate</th>
     </tr>
   </thead>
   <tbody>
-    {% for cid, providers, owners, flagged, score, excess in rows %}
+    {% for group in groups %}
     <tr>
-      <td><a href="/cluster/{{ cid }}?run={{ run_id }}">{{ cid }}</a></td>
-      <td class="num">{{ providers }}</td>
-      <td class="num">{{ owners }}</td>
-      <td class="num">{{ flagged }}</td>
-      <td class="num">{{ "%.1f"|format(score or 0) }}</td>
-      <td class="num">{% if excess %}${{ "{:,.0f}".format(excess) }}{% else %}—{% endif %}</td>
+      <td><a href="/cluster/{{ group.id }}?run={{ run_id }}">Group {{ group.id }}</a></td>
+      <td>
+        <strong>{{ group.headline }}</strong>
+        <br><span class="sub">{{ group.quiet_line }}</span>
+      </td>
+      <td>{{ group.link }}</td>
+      <td class="num">{{ group.owners }}</td>
+      <td class="num">{% if group.dollars %}${{ "{:,.0f}".format(group.dollars) }}{% else %}—{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="6">No multi-provider cluster in this run.</td></tr>
+    <tr><td colspan="5">No group with two or more providers in this run.</td></tr>
     {% endfor %}
   </tbody>
 </table>
+<p class="sub">The peer-gap estimate adds each provider’s gap versus a national median. It is not the amount paid, and it is not a loss amount.</p>
 {% endblock %}

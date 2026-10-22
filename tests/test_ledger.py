@@ -242,6 +242,10 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn("1999990001", page.text)
             self.assertIn("Demonstration data", page.text)
+            groups = client.get("/clusters")
+            self.assertEqual(groups.status_code, 200)
+            self.assertIn("What this list is highlighting", groups.text)
+            self.assertIn("have a billing indicator", groups.text)
             self.assertIn("demonstration data", page.text.lower())
             denied = client.get("/report/1999990001?run=API")
             self.assertEqual(denied.status_code, 409)
@@ -352,6 +356,23 @@ class ReaderIndexTests(unittest.TestCase):
             lowered = (page.text + notes).lower()
             for phrase in BANNED:
                 self.assertNotIn(phrase, lowered)
+
+    def test_group_sort_key_is_not_a_provider_score(self) -> None:
+        import math
+
+        from fraudledger.reference import explain_cluster
+
+        dollars = 25_316_003
+        score = 167 * 2 + math.log1p(dollars) + 5
+        group = explain_cluster(687, 1168, 167, score, dollars)
+        self.assertIn("167 of 687 providers (24%) have a billing indicator", group["headline"])
+        self.assertIn("The other 520", group["quiet_line"])
+        self.assertIn("The sort key is 356", group["sort_sentence"])
+        self.assertIn("334 for the 167 providers", group["sort_sentence"])
+        self.assertIn("not a severity score", group["sort_sentence"])
+        self.assertNotIn("exclusion list", group["sort_sentence"])
+        self.assertFalse(group["has_exclusion"])
+        self.assertEqual(group["link"], "Shared owners")
 
 
 class CatalogTests(unittest.TestCase):

@@ -23,16 +23,16 @@
 </section>
 {% endif %}
 {% if not empty %}
-<p class="sub">Run <span class="mono">{{ run_id }}</span>. Sorted by score. A dismissal stays on the row; it does not delete the flag.</p>
+<p class="sub">Run <span class="mono">{{ run_id }}</span>. This is the provider score. 8 or more is Critical, 5 is High, and 3 is Elevated. It is not the group sort key on <a href="/clusters?run={{ run_id }}">Groups</a>. A dismissal stays on the row; it does not delete the flag.</p>
 <table>
   <thead>
     <tr>
       <th>Tier</th>
-      <th class="num">Score</th>
+      <th class="num">Provider score</th>
       <th>Provider</th>
       <th>Place</th>
       <th>Rules</th>
-      <th class="num">Peer gap</th>
+      <th class="num">Peer-gap estimate</th>
       <th>Review</th>
     </tr>
   </thead>

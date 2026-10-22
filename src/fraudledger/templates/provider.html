@@ -39,9 +39,9 @@
       <p>No directory row. The NPI is known only from billing facts.</p>
       {% endif %}
       {% if clusters %}
-      <p>Clusters
+      <p>Ownership groups
         {% for cid in clusters %}
-        <a href="/cluster/{{ cid }}?run={{ run_id }}">{{ cid }}</a>
+        <a href="/cluster/{{ cid }}?run={{ run_id }}">Group {{ cid }}</a>
         {% endfor %}
       </p>
       {% endif %}

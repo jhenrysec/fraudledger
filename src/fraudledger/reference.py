@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from fraudledger.detect.engine import CENSUS_SHARE, HOSPICE_TAXONOMY, RULE_BLURB
 from fraudledger.detect.score import R11_BONUS
 from fraudledger.settings import Settings
@@ -152,3 +154,83 @@ def reading_notes(settings: Settings) -> str:
             "The workstation How to read page has the full role-code index and the federal sources.",
         ]
     )
+
+
+def _points(value: float) -> str:
+    if abs(value - round(value)) < 0.05:
+        return str(int(round(value)))
+    return f"{value:.1f}"
+
+
+def explain_cluster(
+    providers: int,
+    owners: int,
+    flagged: int,
+    score: float,
+    excess: float | None,
+) -> dict:
+    """Plain-language reading of one ownership group.
+
+    The stored score is a sort key. It is not the provider score, where 8 is Critical.
+    """
+    providers = int(providers or 0)
+    owners = int(owners or 0)
+    flagged = int(flagged or 0)
+    score = float(score or 0)
+    dollars = float(excess or 0)
+    quiet = max(providers - flagged, 0)
+    flag_points = flagged * 2.0
+    dollar_points = math.log1p(max(dollars, 0.0))
+    size_points = min(providers, 10) * 0.5
+    has_exclusion = (score - flag_points - dollar_points - size_points) > 1.5
+    if flagged == 0:
+        headline = f"No billing indicator among {providers} linked providers"
+    else:
+        share = f"{flagged / providers:.0%}" if providers else "0%"
+        headline = f"{flagged} of {providers} providers ({share}) have a billing indicator"
+    if quiet == 0:
+        quiet_line = "Every provider in this group has a billing indicator."
+    elif quiet == 1:
+        quiet_line = "The other provider is listed because of a shared owner or a shared street address. It has no billing indicator in this run."
+    else:
+        quiet_line = (
+            f"The other {quiet} are listed because they share an owner or a street address. "
+            "They have no billing indicator in this run."
+        )
+    if owners == 0:
+        link = "Same street address"
+    else:
+        link = "Shared owners"
+    pieces = [
+        f"{_points(flag_points)} for the {flagged} {'provider' if flagged == 1 else 'providers'} with an indicator",
+        f"{_points(dollar_points)} for the size of the peer-gap total",
+        f"{_points(size_points)} for group size, which stops counting after 10 providers",
+    ]
+    if has_exclusion:
+        pieces.append("3 because a billing NPI in the group is on the exclusion list")
+    sort_sentence = (
+        f"The sort key is {_points(score)}. It is not a severity score, and it is not the provider score "
+        f"(8 or more is Critical on a provider). It is {', '.join(pieces)}."
+    )
+    if dollars:
+        gap_sentence = (
+            f"Added peer-gap estimates: ${dollars:,.0f}. "
+            "Each figure is a gap versus a national median, usually (rate - median) x claim lines. "
+            "Adding them is not the amount paid, and it is not a loss amount."
+        )
+    else:
+        gap_sentence = "The indicators in this group do not carry a dollar peer gap."
+    return {
+        "headline": headline,
+        "quiet_line": quiet_line,
+        "link": link,
+        "sort_sentence": sort_sentence,
+        "gap_sentence": gap_sentence,
+        "providers": providers,
+        "owners": owners,
+        "flagged": flagged,
+        "quiet": quiet,
+        "dollars": dollars,
+        "sort_key": score,
+        "has_exclusion": has_exclusion,
+    }

@@ -1,29 +1,60 @@
 {% extends "base.html" %}
-{% block title %}Cluster {{ header[0] }} · Fraud Ledger{% endblock %}
+{% block title %}Group {{ group_id }} · Fraud Ledger{% endblock %}
 {% block body %}
-<p class="sub"><a href="/clusters?run={{ run_id }}">Clusters</a> · run <span class="mono">{{ run_id }}</span></p>
-<h1>Cluster {{ header[0] }}</h1>
-<p class="sub">{{ header[1] }} providers · {{ header[2] }} owners · {{ header[3] }} flagged · score {{ "%.1f"|format(header[4] or 0) }}</p>
+<p class="sub"><a href="/clusters?run={{ run_id }}">Ownership groups</a> · run <span class="mono">{{ run_id }}</span></p>
+<h1>Group {{ group_id }}</h1>
 <section class="card">
-  <h2>Members</h2>
+  <p><strong>{{ group.headline }}</strong></p>
+  <p>{{ group.quiet_line }}</p>
+  <p>{{ group.owners }} owners. Link: {{ group.link }}.</p>
+  <p>{{ group.gap_sentence }}</p>
+  <p>The provider score in the table is the one to use. 8 or more is Critical, 5 is High, and 3 is Elevated. Providers with an indicator are listed first.</p>
+</section>
+<section class="card">
+  <h2>Providers with a billing indicator</h2>
+  {% if flagged_members %}
   <table>
-    <thead><tr><th>Provider</th><th>Place</th><th>Tier</th><th class="num">Score</th><th>Rules</th></tr></thead>
+    <thead><tr><th>Provider</th><th>Place</th><th>Tier</th><th class="num">Provider score</th><th>Indicators</th></tr></thead>
     <tbody>
-      {% for key, name, city, state, tier, score, rules in members %}
+      {% for key, name, city, state, tier, score, rules in flagged_members %}
       <tr>
         <td><a href="/provider/{{ key }}?run={{ run_id }}">{{ name or key }}</a><br><span class="mono">{{ key }}</span></td>
         <td>{{ city or "—" }}{% if state %}, {{ state }}{% endif %}</td>
-        <td>{{ tier or "—" }}</td>
-        <td class="num">{{ "%.1f"|format(score) if score is not none else "—" }}</td>
+        <td class="tier-{{ (tier or '')|lower }}">{{ tier or "—" }}</td>
+        <td class="num">{{ "%.1f"|format(score) }}</td>
         <td class="mono">{{ rules or "" }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  {% else %}
+  <p>No provider in this group has a billing indicator. The group is only a shared owner or a shared address.</p>
+  {% endif %}
 </section>
-<section class="card">
-  <h2>Owner keys</h2>
-  <p class="sub">The same owner can appear once per role. Do not add the percents. <a href="/index#ownership">How to read this table</a>.</p>
+{% if quiet_members %}
+<details class="card">
+  <summary>{{ group.quiet }} linked providers with no indicator</summary>
+  <p class="sub">These providers did not stand out on billing. They are here because of a shared owner or a shared street address.</p>
+  <table>
+    <thead><tr><th>Provider</th><th>Place</th></tr></thead>
+    <tbody>
+      {% for key, name, city, state, tier, score, rules in quiet_members %}
+      <tr>
+        <td><a href="/provider/{{ key }}?run={{ run_id }}">{{ name or key }}</a><br><span class="mono">{{ key }}</span></td>
+        <td>{{ city or "—" }}{% if state %}, {{ state }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+<details class="card">
+  <summary>Why this group is ordered where it is</summary>
+  <p>{{ group.sort_sentence }}</p>
+</details>
+<details class="card">
+  <summary>{{ group.owners }} owner rows</summary>
+  <p class="sub">The same owner can appear once per role. Do not add the percents. <a href="/index#ownership">How to read a percent</a>.</p>
   <table>
     <thead><tr><th>Associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th></tr></thead>
     <tbody>
@@ -35,9 +66,9 @@
         <td class="num">{{ percent if percent is not none else "—" }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No ownership edge. This community may be an address group only.</td></tr>
+      <tr><td colspan="4">No owner row. The link is a shared street address.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</section>
+</details>
 {% endblock %}

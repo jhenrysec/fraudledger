@@ -5,6 +5,7 @@
 <p class="sub">A score puts a provider higher or lower in the queue. It is not a probability, not a dollar amount, and not a decision that anyone did anything wrong. Config SHA-256 <span class="mono">{{ index.config_sha }}</span>.</p>
 <p>
   <a href="#score">Score</a> ·
+  <a href="#groups">Groups</a> ·
   <a href="#indicators">Indicators</a> ·
   <a href="#ownership">Ownership edges</a> ·
   <a href="#roles">Role codes</a> ·
@@ -45,8 +46,16 @@
     </tbody>
   </table>
   <p>R11 is the billing NPI on the OIG exclusion list with a payment on or after the exclusion date. Its own weight is already in the sum. The extra {{ "%.1f"|format(index.r11_extra) }} is added only for R11. With the default R11 weight of 5, that extra alone reaches the Critical cutoff. R13 is a separate owner name-and-state match. It does not get that extra, and it is not Critical by itself.</p>
-  <p>The cluster bonus is not “this provider has an owner.” It applies only when two or more flagged providers sit in the same ownership community.</p>
+  <p>The cluster bonus is not “this provider has an owner.” It applies only when two or more flagged providers sit in the same ownership community. The <a href="#groups">group sort key</a> on the Groups page is a different number. A value in the hundreds there is not a provider score.</p>
   <p>For a cost outlier, the peer-gap shown beside the score is <span class="mono">(paid per line − national median) × claim lines</span>. That is a gap versus other billers of the same code. It is not a loss amount and not an amount to type on an intake form.</p>
+</section>
+
+<section class="card" id="groups">
+  <h2>Ownership groups</h2>
+  <p>A group is providers connected by a shared owner, or by the same street address when at least three providers use it. The group number is an id. The list is ordered so groups with more billing indicators come first.</p>
+  <p>What the row is highlighting is the count: how many of the linked providers have a billing indicator. The rest are in the group only because of the link. A group of several hundred providers is usually a corporate family, not one lead. Open it and read the provider scores. Leave the providers with no indicator collapsed.</p>
+  <p>The group sort key is not the provider score. For the example of 167 providers with an indicator out of 687, the sort key is about 356. Almost all of that is 167 × 2. The dollar total adds its natural log, about 17 points even at $25 million. Group size adds at most 5 points. None of that means the group is “356 bad.” It means 167 members each have at least one indicator.</p>
+  <p>The peer-gap dollars on a group are those providers’ gaps added together. They are not the amount paid, and they are not a loss amount.</p>
 </section>
 
 <section class="card" id="indicators">

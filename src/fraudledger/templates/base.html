@@ -68,6 +68,8 @@
     .tier-high { color: var(--high); }
     .tier-elevated { color: var(--elevated); }
     .card { background: var(--card); border: 1px solid var(--line); padding: 16px 18px; margin: 0 0 16px; }
+    details.card > summary { cursor: pointer; font-weight: 650; }
+    details.card > summary + * { margin-top: 12px; }
     .grid { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 16px; }
     label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
     input[type="text"], textarea, select {
@@ -122,7 +124,7 @@
     <nav>
       <a href="/">Queue</a>
       <a href="/sources">Sources</a>
-      <a href="/clusters">Clusters</a>
+      <a href="/clusters">Groups</a>
       <a href="/rules">Rules</a>
       <a href="/index">How to read</a>
       <a href="/runs">Runs</a>

@@ -9,6 +9,7 @@ import duckdb
 
 from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.hashing import sha256_file, sha256_text
+from fraudledger.reference import explain_cluster
 from fraudledger.settings import Settings
 
 BANNED = ("fraudster", "guilty", "stole", "confirmed fraud", "fraud amount")
@@ -185,8 +186,14 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         [run_id],
     ).fetchall()
     text_parts.append("")
-    text_parts.append("Ownership clusters")
+    text_parts.append("Ownership groups")
+    text_parts.append(
+        "A group is providers linked by a shared owner or the same street address. "
+        "The count of providers with a billing indicator is the fact to read. "
+        "The sort key is not the provider score. On a provider, 8 or more is Critical."
+    )
     for cluster_id, providers, owners, flagged, score, dollars in clusters:
+        group = explain_cluster(providers, owners, flagged, score, dollars)
         members = [
             row[0]
             for row in con.execute(
@@ -195,8 +202,9 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
             ).fetchall()
         ]
         text_parts.append(
-            f"Cluster {cluster_id}: {providers} providers, {owners} owners, {flagged} flagged, "
-            f"score {score:.1f}, peer-gap ${dollars or 0:,.0f}. Members: {', '.join(members)}"
+            f"Group {cluster_id}: {group['headline']}. {group['quiet_line']} "
+            f"{group['gap_sentence']} {group['sort_sentence']} "
+            f"Members: {', '.join(members)}"
         )
 
     narrative = "\n".join(text_parts) + "\n"

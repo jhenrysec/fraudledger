@@ -65,6 +65,20 @@ KNOWN_SOURCES: tuple[KnownSource, ...] = (
         "https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/home-health-agency-all-owners",
         "Two CSVs from the CMS catalog. Much smaller than the Medicaid extract.",
     ),
+    KnownSource(
+        "medicare-hospice",
+        "Medicare hospice use",
+        "CMS post-acute hospice file: stays, service days, and routine-home-care share, joined by certification number.",
+        "https://data.cms.gov/provider-summary-by-type-of-service/medicare-post-acute-care-hospice/medicare-post-acute-care-utilization-hospice-by-geography-and-provider",
+        "The latest provider year. Much smaller than the Medicaid extract.",
+    ),
+    KnownSource(
+        "medicare-home-health",
+        "Medicare home health use",
+        "CMS post-acute home health file: episodes and visits, joined by certification number.",
+        "https://data.cms.gov/provider-summary-by-type-of-service/medicare-post-acute-care-hospice",
+        "The latest provider year. Much smaller than the Medicaid extract.",
+    ),
 )
 
 CUSTOM_KINDS: tuple[tuple[str, str], ...] = (
@@ -75,6 +89,8 @@ CUSTOM_KINDS: tuple[tuple[str, str], ...] = (
     ("hospice-enrollments", "Hospice enrollment CSV"),
     ("home-health-owners", "Home health owner CSV"),
     ("home-health-enrollments", "Home health enrollment CSV"),
+    ("medicare-hospice", "Medicare hospice provider CSV"),
+    ("medicare-home-health", "Medicare home health provider CSV"),
 )
 
 CONFIG_KEYS = {
@@ -85,6 +101,8 @@ CONFIG_KEYS = {
     "hospice-enrollments": "hospice_enrollments_url",
     "home-health-owners": "home_health_owners_url",
     "home-health-enrollments": "home_health_enrollments_url",
+    "medicare-hospice": "medicare_hospice_url",
+    "medicare-home-health": "medicare_home_health_url",
 }
 
 
@@ -170,6 +188,31 @@ def latest_csv_url(catalog: dict | list, title_prefix: str) -> str:
     return best[1]
 
 
+def latest_pac_url(catalog: dict | list, setting: str) -> str:
+    """Latest provider-level post-acute CSV. Service-detail files are skipped."""
+    datasets = catalog.get("dataset") if isinstance(catalog, dict) else catalog
+    needle = f"{setting} by Geography and Provider".lower()
+    best: tuple[int, str, str] | None = None
+    for item in datasets or []:
+        title = str(item.get("title") or "")
+        lowered = title.lower()
+        if needle not in lowered or "service" in lowered:
+            continue
+        found = re.findall(r"20\d\d", title)
+        year = int(found[-1]) if found else 0
+        modified = str(item.get("modified") or "")
+        for dist in item.get("distribution") or []:
+            url = str(dist.get("downloadURL") or "")
+            if not url.lower().split("?", 1)[0].endswith(".csv"):
+                continue
+            candidate = (year, modified, url)
+            if best is None or candidate > best:
+                best = candidate
+    if best is None:
+        raise SystemExit(f"No Medicare {setting} provider CSV in the CMS catalog.")
+    return best[2]
+
+
 def _fetch_text(url: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "fraudledger/1.0 (public-data research)"})
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -211,6 +254,10 @@ def resolve_file_url(settings: Settings, key: str, override: str | None = None) 
         "home-health-owners": "Home Health Agency All Owners",
         "home-health-enrollments": "Home Health Agency Enrollments",
     }
+    if key == "medicare-hospice":
+        return latest_pac_url(catalog, "Hospice")
+    if key == "medicare-home-health":
+        return latest_pac_url(catalog, "Home Health Agency")
     if key not in prefixes:
         raise SystemExit(f"Unknown source: {key}")
     return latest_csv_url(catalog, prefixes[key])

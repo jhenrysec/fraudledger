@@ -60,6 +60,7 @@ _PERSONAL_CARE = (
 )
 
 PRIORITY_HCPCS = frozenset(_HOSPICE + _HOME_HEALTH + _PERSONAL_CARE)
+HOSPICE_HCPCS = frozenset(_HOSPICE)
 
 
 def priority_in_list() -> str:

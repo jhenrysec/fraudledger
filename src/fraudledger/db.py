@@ -124,13 +124,37 @@ CREATE TABLE IF NOT EXISTS review_states (
     note VARCHAR,
     updated_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS medicare_use (
+    ccn VARCHAR,
+    setting VARCHAR,
+    year INTEGER,
+    stays DOUBLE,
+    service_days DOUBLE,
+    visits DOUBLE,
+    rhc_days_pct DOUBLE,
+    origin VARCHAR
+);
 """
+
+MIGRATIONS = (
+    "ALTER TABLE providers ADD COLUMN IF NOT EXISTS incorporation_date DATE",
+    "ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS incorporation_date DATE",
+    "ALTER TABLE leie ADD COLUMN IF NOT EXISTS first_name VARCHAR",
+    "ALTER TABLE leie ADD COLUMN IF NOT EXISTS last_name VARCHAR",
+    "ALTER TABLE leie ADD COLUMN IF NOT EXISTS state VARCHAR",
+    "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_first VARCHAR",
+    "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_last VARCHAR",
+    "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_state VARCHAR",
+)
 
 
 def connect(db_path: Path) -> duckdb.DuckDBPyConnection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(db_path))
     con.execute(SCHEMA)
+    for statement in MIGRATIONS:
+        con.execute(statement)
     return con
 
 

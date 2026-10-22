@@ -12,5 +12,5 @@
   {% endif %}
 </article>
 {% endfor %}
-<p class="sub">Score starts as the sum of distinct rule weights. Add 2.0 when at least 3 distinct rules fire. Add 3.0 when R11 fires. Add the cluster bonus only when this provider is flagged and another member of the same multi-provider cluster is also flagged. Tiers: Critical if R11 or score is at least 8; High at least 5; Elevated at least 3; otherwise Monitor.</p>
+<p class="sub">Score starts as the sum of distinct rule weights. Add 2.0 when at least 3 distinct rules fire. Add 3.0 when R11 fires. R13 is an owner name and state match, not an NPI match, and it does not add that extra 3.0. Add the cluster bonus only when this provider is flagged and another member of the same multi-provider cluster is also flagged. Tiers: Critical if R11 or score is at least 8; High at least 5; Elevated at least 3; otherwise Monitor.</p>
 {% endblock %}

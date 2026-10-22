@@ -6,7 +6,14 @@ import duckdb
 
 from fraudledger.ingest.catalog import resolve_file_url
 from fraudledger.ingest.common import report_progress, set_progress_label
-from fraudledger.ingest.public import ingest_enrollments, ingest_leie, ingest_medicaid, ingest_nppes, ingest_ownership
+from fraudledger.ingest.public import (
+    ingest_enrollments,
+    ingest_leie,
+    ingest_medicaid,
+    ingest_medicare_use,
+    ingest_nppes,
+    ingest_ownership,
+)
 from fraudledger.settings import Settings
 
 PAIRS = {
@@ -24,6 +31,8 @@ LABELS = {
     "hospice-enrollments": "Hospice enrollments",
     "home-health-owners": "Home health owners",
     "home-health-enrollments": "Home health enrollments",
+    "medicare-hospice": "Medicare hospice use",
+    "medicare-home-health": "Medicare home health use",
 }
 
 
@@ -78,6 +87,11 @@ def pull(
         chosen = resolve_file_url(settings, key, url)
         count = ingest_enrollments(con, settings, url=chosen, kind=key)
         return f"Enrollment rows: {count}. Source {chosen}"
+    if key in {"medicare-hospice", "medicare-home-health"}:
+        chosen = resolve_file_url(settings, key, url)
+        setting = "hospice" if key == "medicare-hospice" else "home-health"
+        count = ingest_medicare_use(con, settings, url=chosen, setting=setting)
+        return f"Medicare {setting} provider rows: {count}. Source {chosen}"
     raise SystemExit(f"Unknown source: {key}")
 
 
@@ -113,6 +127,11 @@ def plan_working(settings: Settings) -> list:
         steps.extend(plan(settings, "nppes"))
     except SystemExit as exc:
         steps.append(("skip", str(exc), {}))
+    for key in ("medicare-hospice", "medicare-home-health"):
+        try:
+            steps.extend(plan(settings, key))
+        except SystemExit as exc:
+            steps.append(("skip", str(exc), {}))
     steps.extend(plan(settings, "medicaid", focus="priority", drop_demo=True))
     return steps
 
@@ -149,6 +168,10 @@ def load_local(
     if key in {"hospice-enrollments", "home-health-enrollments"}:
         count = ingest_enrollments(con, settings, path=local, url=url, kind=key)
         return f"Enrollment rows: {count}. Source {url}"
+    if key in {"medicare-hospice", "medicare-home-health"}:
+        setting = "hospice" if key == "medicare-hospice" else "home-health"
+        count = ingest_medicare_use(con, settings, path=local, url=url, setting=setting)
+        return f"Medicare {setting} provider rows: {count}. Source {url}"
     raise SystemExit(f"Unknown source: {key}")
 
 
@@ -166,5 +189,10 @@ def pull_working(con: duckdb.DuckDBPyConnection, settings: Settings) -> str:
         parts.append(pull(con, settings, "nppes"))
     except SystemExit as exc:
         parts.append(f"NPPES skipped: {exc}")
+    for key in ("medicare-hospice", "medicare-home-health"):
+        try:
+            parts.append(pull(con, settings, key))
+        except SystemExit as exc:
+            parts.append(f"{key} skipped: {exc}")
     parts.append(pull(con, settings, "medicaid", drop_demo=True, focus="priority"))
     return " ".join(parts)

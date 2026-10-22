@@ -24,7 +24,7 @@
 
 <section class="card">
   <h2>Public working set</h2>
-  <p>This is the path that scores real billing. It loads the OIG exclusion list, hospice enrollments and owners, home-health enrollments and owners, and NPPES when the CMS index is online. It then loads Medicaid and keeps hospice, home health, and personal-care procedure codes, removes fictional demonstration rows, and scores what loaded. The Medicaid file itself is still multi-gigabyte.</p>
+  <p>This is the path that scores real billing. It loads the OIG exclusion list, hospice enrollments and owners, home-health enrollments and owners, and NPPES when the CMS index is online. It loads the latest Medicare hospice and home-health provider files. It then loads Medicaid and keeps hospice, home health, and personal-care procedure codes, removes fictional demonstration rows, and scores what loaded. The Medicaid file itself is still multi-gigabyte. Monthly patient counts in that file are kept so a payment jump that only tracks the patient count is not flagged.</p>
   <form method="post" action="/sources">
     <input type="hidden" name="mode" value="working">
     <button type="submit" {% if running %}disabled{% endif %}>Load the public working set</button>

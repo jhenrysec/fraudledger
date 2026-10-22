@@ -139,6 +139,18 @@ def _as_month(column: str) -> str:
     )
 
 
+def _name_key(value: str | None) -> str | None:
+    text = re.sub(r"[^A-Za-z]+", " ", value or "").strip().upper()
+    return text or None
+
+
+def _state_key(value: str | None) -> str | None:
+    text = re.sub(r"[^A-Za-z]", "", value or "").upper()
+    if len(text) != 2:
+        return None
+    return text
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -177,20 +189,22 @@ def ingest_leie(
         bus = lookup.get("busname")
         excl_type = lookup.get("excltype")
         excl_date = lookup.get("excldate")
+        state_col = lookup.get("state")
         con.execute("DELETE FROM leie WHERE origin = 'public'")
         batch = []
-        for row in reader:
-            raw_npi = re.sub(r"\D", "", row.get(npi_col) or "")
-            if len(raw_npi) != 10:
-                continue
+
+        def add(raw_npi: str | None, row: dict) -> None:
+            first_name = _name_key(row.get(first) if first else None)
+            last_name = _name_key(row.get(last) if last else None)
+            state_name = _state_key(row.get(state_col) if state_col else None)
             name = " ".join(
-                part.strip()
+                part
                 for part in (
-                    row.get(first) if first else "",
-                    row.get(last) if last else "",
-                    row.get(bus) if bus else "",
+                    first_name,
+                    last_name,
+                    (row.get(bus) or "").strip() if bus else "",
                 )
-                if part and part.strip()
+                if part
             )
             batch.append(
                 (
@@ -198,19 +212,38 @@ def ingest_leie(
                     name or None,
                     (row.get(excl_type) or "").strip() if excl_type else None,
                     _parse_date(row.get(excl_date) if excl_date else None),
+                    first_name,
+                    last_name,
+                    state_name,
                     "public",
                 )
             )
+
+        for row in reader:
+            raw_npi = re.sub(r"\D", "", row.get(npi_col) or "")
+            named = _name_key(row.get(first) if first else None) and _name_key(row.get(last) if last else None)
+            if len(raw_npi) == 10:
+                add(raw_npi, row)
+            elif named and _state_key(row.get(state_col) if state_col else None):
+                add(None, row)
             if len(batch) >= 5000:
                 con.executemany(
-                    "INSERT INTO leie (npi, name, excl_type, excl_date, origin) VALUES (?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO leie (
+                        npi, name, excl_type, excl_date, first_name, last_name, state, origin
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     batch,
                 )
                 inserted += len(batch)
                 batch = []
         if batch:
             con.executemany(
-                "INSERT INTO leie (npi, name, excl_type, excl_date, origin) VALUES (?, ?, ?, ?, ?)",
+                """
+                INSERT INTO leie (
+                    npi, name, excl_type, excl_date, first_name, last_name, state, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 batch,
             )
             inserted += len(batch)
@@ -249,6 +282,10 @@ def ingest_ownership(
         role = pick("role_code_owner", "owner_role_code", "role_code", "role")
         owner_name = pick("organization_name_owner", "owner_name", "associate_name")
         org_name = pick("organization_name", "org_name", "provider_name")
+        first_name = pick("first_name_owner", "owner_first_name", "first_name")
+        last_name = pick("last_name_owner", "owner_last_name", "last_name")
+        owner_state = pick("state_owner", "owner_state")
+        associated = pick("association_date_owner", "association_date", "effective_date")
         if not associate or not (provider_npi or enrollment):
             raise SystemExit(
                 "Ownership file needs an associate id and an NPI or enrollment id. "
@@ -293,20 +330,32 @@ def ingest_ownership(
             name = ""
             if owner_name:
                 name = (row.get(owner_name) or "").strip()
+            person = " ".join(
+                part
+                for part in (
+                    _name_key(row.get(first_name) if first_name else None),
+                    _name_key(row.get(last_name) if last_name else None),
+                )
+                if part
+            )
             org = (row.get(org_name) or "").strip() if org_name else ""
+            associated_on = _parse_date(row.get(associated) if associated else None)
             for provider_key in provider_keys:
                 batch.append(
                     (
                         owner_key,
-                        name or None,
+                        name or person or None,
                         provider_key,
                         percentage,
                         role_code or None,
                         strength,
                         edge_weight,
-                        None,
+                        associated_on.isoformat() if associated_on else None,
                         f"{kind}:{enrollment_id}:{owner_key}:{role_code}:{provider_key}",
                         f"public:{kind}",
+                        _name_key(row.get(first_name) if first_name else None),
+                        _name_key(row.get(last_name) if last_name else None),
+                        _state_key(row.get(owner_state) if owner_state else None),
                     )
                 )
                 linked_npi = provider_key if len(provider_key) == 10 and provider_key.isdigit() else None
@@ -326,8 +375,9 @@ def ingest_ownership(
                 """
                 INSERT INTO ownership_edges (
                     owner_key, owner_name, provider_key, percentage, role_code,
-                    role_strength, edge_weight, effective_date, edge_source_id, origin
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    role_strength, edge_weight, effective_date, edge_source_id, origin,
+                    owner_first, owner_last, owner_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 batch,
             )
@@ -507,6 +557,7 @@ def ingest_enrollments(
         city = pick("city")
         state = pick("state")
         postal = pick("zip_code", "zip")
+        incorporated = pick("incorporation_date", "enrollment_date")
         origin = f"public:{kind}"
         con.execute("DELETE FROM enrollments WHERE origin = ?", [origin])
         batch = []
@@ -515,6 +566,7 @@ def ingest_enrollments(
             npi = re.sub(r"\D", "", row.get(npi_col) or "")
             if not enrollment_id or len(npi) != 10:
                 continue
+            formed = _parse_date(row.get(incorporated) if incorporated else None)
             batch.append(
                 (
                     enrollment_id,
@@ -525,6 +577,7 @@ def ingest_enrollments(
                     (row.get(city) or "").strip() if city else None,
                     (row.get(state) or "").strip() if state else None,
                     (row.get(postal) or "").strip() if postal else None,
+                    formed,
                     origin,
                 )
             )
@@ -532,8 +585,8 @@ def ingest_enrollments(
             con.executemany(
                 """
                 INSERT INTO enrollments (
-                    enrollment_id, npi, ccn, name, address, city, state, zip, origin
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    enrollment_id, npi, ccn, name, address, city, state, zip, incorporation_date, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 batch,
             )
@@ -542,8 +595,8 @@ def ingest_enrollments(
                 """
                 INSERT INTO providers (
                     provider_key, npi, enrollment_id, ccn, name, entity_type, taxonomy,
-                    address, city, state, zip, enumeration_date, origin
-                ) VALUES (?, ?, ?, ?, ?, 'organization', NULL, ?, ?, ?, ?, NULL, ?)
+                    address, city, state, zip, enumeration_date, incorporation_date, origin
+                ) VALUES (?, ?, ?, ?, ?, 'organization', NULL, ?, ?, ?, ?, NULL, ?, ?)
                 ON CONFLICT (provider_key) DO UPDATE SET
                     npi = COALESCE(providers.npi, excluded.npi),
                     enrollment_id = COALESCE(providers.enrollment_id, excluded.enrollment_id),
@@ -552,12 +605,91 @@ def ingest_enrollments(
                     address = COALESCE(providers.address, excluded.address),
                     city = COALESCE(providers.city, excluded.city),
                     state = COALESCE(providers.state, excluded.state),
-                    zip = COALESCE(providers.zip, excluded.zip)
+                    zip = COALESCE(providers.zip, excluded.zip),
+                    incorporation_date = COALESCE(excluded.incorporation_date, providers.incorporation_date)
                 """,
                 [
-                    (npi, npi, enrollment_id, ccn_value, name, street, city_name, state_name, zip_code, origin)
-                    for enrollment_id, npi, ccn_value, name, street, city_name, state_name, zip_code, origin in batch
+                    (npi, npi, enrollment_id, ccn_value, name, street, city_name, state_name, zip_code, formed, origin)
+                    for enrollment_id, npi, ccn_value, name, street, city_name, state_name, zip_code, formed, origin in batch
                 ],
             )
     _record_snapshot(con, kind, locator, source, digest, note)
     return inserted
+
+
+def ingest_medicare_use(
+    con: duckdb.DuckDBPyConnection,
+    settings: Settings,
+    path: str | None = None,
+    url: str | None = None,
+    setting: str = "hospice",
+) -> int:
+    """Load one Medicare post-acute provider file, keyed by the CMS certification number."""
+    settings.ensure_dirs()
+    source, locator = _input_path(settings, path, url, f"medicare-{setting}")
+    readable = materialize(source, settings.data_dir / "tmp" / "unpack")
+    digest, note = store_raw(settings.data_dir, source, f"medicare-{setting}", locator, readable.name)
+    enc = text_encoding(readable)
+    duck = "cp1252" if enc == "cp1252" else "utf-8"
+    header_con = duckdb.connect()
+    names = [
+        row[0]
+        for row in header_con.execute(
+            f"""
+            DESCRIBE SELECT * FROM read_csv(
+                ?, header=true, sample_size=200, all_varchar=true, ignore_errors=true, encoding='{duck}'
+            )
+            """,
+            [str(readable)],
+        ).fetchall()
+    ]
+    header_con.close()
+    lookup = {normalize_header(name): name for name in names}
+
+    def pick(*candidates: str) -> str | None:
+        for candidate in candidates:
+            if candidate in lookup:
+                return lookup[candidate]
+        return None
+
+    provider_id = pick("prvdr_id", "ccn", "provider_id")
+    stays_col = pick("tot_epsd_stay_cnt", "stays", "episodes")
+    days_col = pick("tot_srvc_days", "service_days")
+    if not provider_id or not stays_col or not days_col:
+        raise SystemExit(f"Medicare file is missing provider, stay, or day columns. Headers: {names[:24]}")
+    year_col = pick("year")
+    rhc_col = pick("hospc_rhc_days_pct")
+    nursing = pick("nrsng_visits_cnt")
+    social = pick("msw_visits_cnt")
+    aide = pick("aide_visits_cnt")
+
+    def num(column: str | None) -> str:
+        if not column:
+            return "CAST(NULL AS DOUBLE)"
+        return f'try_cast("{column}" AS DOUBLE)'
+
+    visit_terms = [num(column) for column in (nursing, social, aide) if column]
+    visits = " + ".join(f"COALESCE({term}, 0)" for term in visit_terms) if visit_terms else "CAST(NULL AS DOUBLE)"
+    year_sql = f'try_cast("{year_col}" AS INTEGER)' if year_col else "CAST(NULL AS INTEGER)"
+    origin = f"public:medicare-{setting}"
+    con.execute("DELETE FROM medicare_use WHERE origin = ?", [origin])
+    con.execute(
+        f"""
+        INSERT INTO medicare_use (ccn, setting, year, stays, service_days, visits, rhc_days_pct, origin)
+        SELECT
+            regexp_replace(CAST("{provider_id}" AS VARCHAR), '[^0-9]', '', 'g'),
+            ?,
+            {year_sql},
+            {num(stays_col)},
+            {num(days_col)},
+            {visits},
+            {num(rhc_col)},
+            ?
+        FROM read_csv(?, header=true, all_varchar=true, ignore_errors=true, encoding='{duck}')
+        WHERE regexp_full_match(regexp_replace(CAST("{provider_id}" AS VARCHAR), '[^0-9]', '', 'g'), '[0-9]+')
+        """,
+        [setting, origin, str(readable)],
+    )
+    count = con.execute("SELECT COUNT(*) FROM medicare_use WHERE origin = ?", [origin]).fetchone()[0]
+    _record_snapshot(con, f"medicare-{setting}", locator, source, digest, note)
+    return int(count)

@@ -148,6 +148,17 @@ class IngestTests(unittest.TestCase):
         )
         self.assertEqual(mapping["billing_npi"], "BILLING_PROVIDER_NPI_NUM")
         self.assertEqual(mapping["claim_lines"], "TOTAL_CLAIMS")
+        patients = resolve_columns(
+            [
+                "BILLING_PROVIDER_NPI_NUM",
+                "HCPCS_CODE",
+                "CLAIM_FROM_MONTH",
+                "TOTAL_PATIENTS",
+                "TOTAL_CLAIM_LINES",
+                "TOTAL_PAID",
+            ]
+        )
+        self.assertEqual(patients["beneficiaries"], "TOTAL_PATIENTS")
 
     def test_nppes_does_not_rebrand_demo_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -619,6 +630,98 @@ class PublicReportTests(unittest.TestCase):
             self.assertEqual(blank, 0)
             self.assertTrue((report / "report.txt").is_file())
             self.assertNotIn("NoneType", (report / "report.txt").read_text(encoding="utf-8"))
+
+
+class StrengthTests(unittest.TestCase):
+    def test_added_public_fields_change_the_indicators(self) -> None:
+        from fraudledger.detect.engine import apply_rules
+        from fraudledger.ingest.public import ingest_medicare_use
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            path = Path(tmp) / "facts.csv"
+            lines = ["BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PATIENTS,TOTAL_PAID,TOTAL_CLAIM_LINES"]
+            lines.append("1234567893,T1019,2023-01,100,1000000,10")
+            lines.append("1234567893,T1019,2024-01,400,4000000,10")
+            lines.append("1234567894,T1019,2023-01,100,1000000,10")
+            lines.append("1234567894,T1019,2024-01,100,4000000,10")
+            lines.append("1234567895,T2042,2024-01,20,2000000,10")
+            lines.append("1234567896,T2042,2024-01,20,2000000,10")
+            lines.append("1234567897,T1019,2024-06,40,6000000,20")
+            lines.append("1234567898,T1019,2024-06,40,6000000,20")
+            for index in range(8):
+                npi = f"12345678{index:02d}"[-10:]
+                lines.append(f"{npi},T2042,2024-03,10,1000,1")
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            con = connect(settings.db_path)
+            ingest_medicaid(con, settings, path=str(path), focus="priority")
+            con.executemany(
+                """
+                INSERT INTO providers (
+                    provider_key, npi, name, entity_type, taxonomy, enumeration_date, incorporation_date, origin
+                ) VALUES (?, ?, 'Example', 'organization', ?, ?, ?, 'public')
+                """,
+                [
+                    ("1234567893", "1234567893", "251E00000X", date(2018, 1, 1), None),
+                    ("1234567894", "1234567894", "251E00000X", date(2018, 1, 1), None),
+                    ("1234567895", "1234567895", "251G00000X", date(2016, 1, 1), None),
+                    ("1234567896", "1234567896", "251E00000X", date(2016, 1, 1), None),
+                    ("1234567897", "1234567897", "251E00000X", date(2023, 6, 1), date(2010, 1, 1)),
+                    ("1234567898", "1234567898", "251E00000X", date(2023, 6, 1), None),
+                ],
+            )
+            con.execute(
+                """
+                INSERT INTO ownership_edges (
+                    owner_key, owner_name, provider_key, percentage, role_code, role_strength,
+                    edge_weight, effective_date, edge_source_id, origin, owner_first, owner_last, owner_state
+                ) VALUES
+                    ('O1', 'JANE SMITH', '1234567894', 100, '40', 3, 3, '2024-02-01', 'e1', 'public', 'JANE', 'SMITH', 'TX'),
+                    ('O2', 'JANE SMITH', '1234567893', 100, '40', 3, 3, '2024-02-01', 'e2', 'public', 'JANE', 'SMITH', 'TX')
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO leie (npi, name, excl_type, excl_date, first_name, last_name, state, origin)
+                VALUES (NULL, 'JANE SMITH', '1128a1', DATE '2020-01-01', 'JANE', 'SMITH', 'TX', 'public')
+                """
+            )
+            con.executemany(
+                """
+                INSERT INTO enrollments (enrollment_id, npi, ccn, origin)
+                VALUES (?, ?, ?, 'public')
+                """,
+                [(f"E{index}", f"12345678{index:02d}"[-10:], f"{index + 1:06d}") for index in range(8)],
+            )
+            medicare = Path(tmp) / "hospice.csv"
+            medicare_rows = ["YEAR,PRVDR_ID,SMRY_CTGRY,TOT_EPSD_STAY_CNT,TOT_SRVC_DAYS,HOSPC_RHC_DAYS_PCT"]
+            medicare_rows.append("2024,NATIONAL TOTAL,NATION,100,1000,90")
+            for index in range(8):
+                days = 20000 if index == 0 else 5000
+                medicare_rows.append(f"2024,{index + 1:06d},PROVIDER,100,{days},98")
+            medicare.write_text("\n".join(medicare_rows) + "\n", encoding="utf-8")
+            ingest_medicare_use(con, settings, path=str(medicare), setting="hospice")
+            apply_rules(con, settings, "STRENGTH")
+            tracked = flags_for(con, "STRENGTH", "1234567893")
+            flat_census = flags_for(con, "STRENGTH", "1234567894")
+            hospice = flags_for(con, "STRENGTH", "1234567895")
+            home_health = flags_for(con, "STRENGTH", "1234567896")
+            old_org = flags_for(con, "STRENGTH", "1234567897")
+            new_npi = flags_for(con, "STRENGTH", "1234567898")
+            long_stay = flags_for(con, "STRENGTH", "1234567800")
+            ordinary = flags_for(con, "STRENGTH", "1234567801")
+            con.close()
+            self.assertNotIn("R07", tracked)
+            self.assertIn("R07", flat_census)
+            self.assertIn("R12", flat_census)
+            self.assertIn("R13", flat_census)
+            self.assertNotIn("R05", hospice)
+            self.assertIn("R05", home_health)
+            self.assertNotIn("R10", old_org)
+            self.assertIn("R10", new_npi)
+            self.assertIn("R14", long_stay)
+            self.assertNotIn("R14", ordinary)
 
 
 if __name__ == "__main__":

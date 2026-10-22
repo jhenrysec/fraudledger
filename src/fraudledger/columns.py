@@ -27,6 +27,7 @@ def resolve_columns(fieldnames: list[str]) -> dict[str, str]:
         "total_unique_beneficiaries",
         "beneficiaries",
         "unique_beneficiaries",
+        "total_patients",
     )
     servicing = pick("servicing_provider_npi_num", "servicing_npi")
     missing = [

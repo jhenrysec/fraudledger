@@ -78,6 +78,24 @@ rules:
   R11:
     title: Billing after OIG exclusion
     weight: 5
+  R12:
+    title: Payment jump with a new owner
+    weight: 2
+  R13:
+    title: Excluded owner
+    weight: 4
+  R14:
+    title: Long Medicare hospice stay
+    multiple_of_median: 2.0
+    min_stays: 30
+    min_providers: 8
+    weight: 2
+  R15:
+    title: High Medicare home-health visits per episode
+    multiple_of_median: 2.0
+    min_episodes: 30
+    min_providers: 8
+    weight: 2
 
 role_strength:
   "01": 3.0

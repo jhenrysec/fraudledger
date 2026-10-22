@@ -11,7 +11,7 @@ from fraudledger.db import connect
 from fraudledger.graph.cluster import build_communities
 from fraudledger.graph.edges import qualifies, weight
 from fraudledger.ingest.demo import load_demo
-from fraudledger.ingest.public import ingest_nppes, ingest_ownership
+from fraudledger.ingest.public import ingest_medicaid, ingest_nppes, ingest_ownership
 from fraudledger.pipeline import execute_run
 from fraudledger.report.assemble import BANNED, verify_run
 from fraudledger.settings import load_settings
@@ -551,6 +551,23 @@ class PublicReportTests(unittest.TestCase):
             extracted = materialize(zipped, Path(tmp) / "unpack")
             self.assertEqual(extracted.suffix, ".csv")
             self.assertIn("1234567893", extracted.read_text(encoding="utf-8"))
+
+    def test_claim_month_may_be_year_and_month(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            path = Path(tmp) / "month.csv"
+            path.write_text(
+                "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+                "1234567893,T2042,2024-04,80,4\n"
+                "1234567893,T2042,not-a-month,9,1\n",
+                encoding="utf-8",
+            )
+            con = connect(settings.db_path)
+            ingest_medicaid(con, settings, path=str(path), focus="priority")
+            rows = con.execute("SELECT month, paid FROM facts_medicaid ORDER BY month").fetchall()
+            con.close()
+            self.assertEqual(rows, [(date(2024, 4, 1), 80.0)])
 
 
 if __name__ == "__main__":

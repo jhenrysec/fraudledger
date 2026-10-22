@@ -80,12 +80,13 @@ def ingest_medicaid(
     beneficiaries = mapping["beneficiaries"]
     servicing_sql = f'"{servicing}"' if servicing else "NULL"
     beneficiaries_sql = f'"{beneficiaries}"' if beneficiaries else "NULL"
-    where = ""
+    month_expr = _as_month(mapping["month"])
+    where = f"\nWHERE {month_expr} IS NOT NULL"
     if focus == "priority":
         from fraudledger.ingest.focus import priority_in_list
 
-        where = (
-            f'\nWHERE upper(trim(CAST("{mapping["hcpcs"]}" AS VARCHAR))) '
+        where += (
+            f'\n  AND upper(trim(CAST("{mapping["hcpcs"]}" AS VARCHAR))) '
             f"IN ({priority_in_list()})"
         )
     elif focus:
@@ -97,7 +98,7 @@ def ingest_medicaid(
             lpad(CAST("{mapping['billing_npi']}" AS VARCHAR), 10, '0') AS billing_npi,
             lpad(CAST({servicing_sql} AS VARCHAR), 10, '0') AS servicing_npi,
             CAST("{mapping['hcpcs']}" AS VARCHAR) AS hcpcs,
-            CAST("{mapping['month']}" AS DATE) AS month,
+            {month_expr} AS month,
             CAST({beneficiaries_sql} AS DOUBLE) AS beneficiaries,
             CAST("{mapping['claim_lines']}" AS DOUBLE) AS claim_lines,
             CAST("{mapping['paid']}" AS DOUBLE) AS paid,
@@ -123,13 +124,27 @@ def ingest_medicaid(
     return count_files
 
 
+def _as_month(column: str) -> str:
+    """Medicaid publishes CLAIM_FROM_MONTH as YYYY-MM. A full date is also accepted."""
+    text = f"trim(CAST(\"{column}\" AS VARCHAR))"
+    return (
+        "CAST(COALESCE("
+        f"try_strptime({text}, '%Y-%m-%d'), "
+        f"try_strptime({text}, '%Y-%m'), "
+        f"try_strptime({text}, '%Y%m%d'), "
+        f"try_strptime({text}, '%Y%m'), "
+        f"try_strptime({text}, '%m/%d/%Y')"
+        ") AS DATE)"
+    )
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
     text = value.strip()
     if not text:
         return None
-    for fmt in ("%Y-%m-%d", "%Y%m%d", "%m/%d/%Y", "%m%d%Y"):
+    for fmt in ("%Y-%m-%d", "%Y-%m", "%Y%m%d", "%Y%m", "%m/%d/%Y", "%m%d%Y"):
         try:
             return datetime.strptime(text[:10] if fmt == "%Y-%m-%d" else text, fmt).date()
         except ValueError:

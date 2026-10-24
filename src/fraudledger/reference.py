@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from fraudledger.detect.engine import CENSUS_SHARE, HOSPICE_TAXONOMY, RULE_BLURB
+from fraudledger.detect.engine import CENSUS_SHARE, HOSPICE_TAXONOMY, RATE_SHARE, RULE_BLURB
 from fraudledger.detect.score import R11_BONUS
 from fraudledger.settings import Settings
 
@@ -47,6 +47,7 @@ _LABELS = {
     "min_stays": "minimum stays",
     "min_episodes": "minimum episodes",
     "min_providers": "minimum peer providers",
+    "min_billers": "minimum billing NPIs",
 }
 
 _EXAMPLES = (("34", 100.0), ("40", 51.0), ("35", 51.0), ("42", 2.0))
@@ -119,6 +120,9 @@ def reader_index(settings: Settings) -> dict:
         "tier_elevated": float(settings.tier_elevated),
         "r11_extra": float(R11_BONUS),
         "census_share": float(CENSUS_SHARE),
+        "rate_share": float(RATE_SHARE),
+        "cluster_bonus_max": int(settings.cluster_bonus_max_providers),
+        "address_link_max": int(settings.address_link_max),
         "default_role_strength": float(settings.default_role_strength),
         "hospice_taxonomy": ", ".join(HOSPICE_TAXONOMY),
         "roles": roles,
@@ -138,7 +142,7 @@ def reading_notes(settings: Settings) -> str:
                 "Score = sum of distinct indicator weights"
                 f" + {index['multi_flag_bonus']:.1f} when at least {index['multi_flag_min']} indicators fired"
                 f" + {index['r11_extra']:.1f} when R11 fired"
-                f" + {index['cluster_bonus']:.1f} when another flagged provider shares the cluster."
+                f" + {index['cluster_bonus']:.1f} when another flagged provider shares a group of at most {index['cluster_bonus_max']} providers."
             ),
             (
                 f"Critical means R11 fired or the score is at least {index['tier_critical']:g}. "
@@ -146,6 +150,7 @@ def reading_notes(settings: Settings) -> str:
                 f"Elevated is at least {index['tier_elevated']:g}. "
                 "Any other flagged provider is Monitor."
             ),
+            "A cost peer is the provider's state when that state has enough billers of the code. Otherwise it is national.",
             "An ownership edge is one role for one owner. Do not add the percent column.",
             "Add role 34 once per owner for the direct share. CMS says that direct total should generally be about 100%.",
             "Role 35 is indirect ownership of an owner. Do not add it to role 34.",
@@ -215,7 +220,8 @@ def explain_cluster(
     if dollars:
         gap_sentence = (
             f"Added peer-gap estimates: ${dollars:,.0f}. "
-            "Each figure is a gap versus a national median, usually (rate - median) x claim lines. "
+            "Each figure is a gap versus a peer median. The peer group is the provider's state when that state has enough billers of the code. Otherwise it is national. "
+            "The usual formula is (rate - median) x claim lines. "
             "Adding them is not the amount paid, and it is not a loss amount."
         )
     else:

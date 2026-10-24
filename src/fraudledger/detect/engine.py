@@ -4,29 +4,35 @@ import json
 
 import duckdb
 
-from fraudledger.ingest.focus import HOSPICE_HCPCS
+from fraudledger.ingest.focus import HOME_HEALTH_HCPCS, HOSPICE_HCPCS, PERSONAL_CARE_HCPCS
 from fraudledger.settings import Settings
 
 HOSPICE_TAXONOMY = ("251G00000X", "315D00000X")
 # A paid jump is not flagged when patient growth is at least this share of the paid growth.
 CENSUS_SHARE = 0.75
+# A paid jump is not flagged when paid per patient grew by less than this share.
+RATE_SHARE = 0.25
 
 RULE_BLURB = {
-    "R01": "Paid per claim line is more than the configured multiple of the national median for that HCPCS, with enough dollars to matter.",
+    "R01": "Paid per claim line is more than the configured multiple of the peer median for that HCPCS. The peer group is the provider's state when that state has enough billers. Otherwise it is national.",
     "R02": "The provider is above the 90th percentile rate on at least two HCPCS codes that have a large enough peer group.",
     "R03": "Claim lines divided by the largest monthly beneficiary count exceed the configured cap. Monthly beneficiary counts are not additive across months, so this uses the max month.",
     "R04": "Average claim lines per active month imply more lines per working day than the configured cap.",
-    "R05": "One or two HCPCS codes account for a very large paid total. A hospice taxonomy whose codes are all hospice codes is not flagged.",
-    "R06": "Monthly paid amounts barely move across many months. Real demand usually varies. A hospice taxonomy whose codes are all hospice codes is not flagged.",
-    "R07": "Paid jumped year over year by more than the configured ratio and by more than the configured dollar change. When patient counts exist for both years, a jump that tracks the patient count is not flagged.",
+    "R05": "One or two HCPCS codes account for a very large paid total. A provider that bills only the expected codes for hospice, home health, or personal care is not flagged.",
+    "R06": "Monthly paid amounts barely move across many months. Real demand usually varies. A provider that bills only the expected codes for hospice, home health, or personal care is not flagged.",
+    "R07": "Paid jumped year over year by more than the configured ratio and by more than the configured dollar change. A jump that tracks the patient count, or that leaves paid per patient almost unchanged, is not flagged.",
     "R08": "Latest calendar year paid grew by more than the explosive-growth ratio versus the prior calendar year. A jump that tracks the patient count is not flagged.",
-    "R09": "The first year of billing is large. An incorporation date, when the enrollment file has one, is used before the NPPES enumeration date.",
+    "R09": "The first year of billing is large, and an incorporation date or an NPPES enumeration date says the organization is new. A missing date is not treated as new.",
     "R10": "Lifetime paid in this extract is very large and the organization, or the NPI when no incorporation date is present, is on or after the configured date.",
     "R11": "The billing NPI is on the OIG LEIE and payments appear on or after the exclusion date.",
     "R12": "Paid jumped by more than the billing-swing thresholds and a qualifying owner was associated in the latest year or the year before.",
-    "R13": "A qualifying owner matches the LEIE on exact first name, last name, and state. The agency name is not compared. This is not an NPI match.",
-    "R14": "Medicare hospice service days divided by stays are more than the configured multiple of the provider median.",
+    "R13": "A qualifying owner matches the LEIE on exact first name, last name, and state. A middle name is also required when both sides have one. A reinstated person is not flagged. The agency name is not compared.",
+    "R14": "Medicare hospice service days divided by stays are more than the configured multiple of the provider median. The certification number is matched with the enrollment state when both files have a state.",
     "R15": "Medicare home health visits per episode are more than the configured multiple of the provider median.",
+    "R16": "A servicing NPI, not the billing NPI, is on the OIG LEIE and payments appear on or after the exclusion date.",
+    "R17": "The same servicing NPI is paid through several billing NPIs that do not share an owner.",
+    "R18": "Medicare Care Compare early or late live discharges are more than the configured multiple of the hospice median.",
+    "R19": "Medicare Care Compare potentially preventable readmissions are more than the configured multiple of the home-health median.",
 }
 
 
@@ -34,9 +40,20 @@ def _rule(settings: Settings, rule_id: str) -> dict:
     return dict(settings.rules.get(rule_id) or {})
 
 
+def _family_sql(codes: frozenset[str]) -> str:
+    listed = ", ".join(f"'{code}'" for code in sorted(codes))
+    return f"""
+        SELECT provider_key
+        FROM agg_hcpcs
+        GROUP BY 1
+        HAVING SUM(CASE WHEN upper(hcpcs) NOT IN ({listed}) THEN 1 ELSE 0 END) = 0
+    """
+
+
 def _expected_hospice_sql(provider_key: str = "provider_key") -> str:
-    codes = ", ".join(f"'{code}'" for code in sorted(HOSPICE_HCPCS))
+    """Providers whose narrow or flat billing is the expected product, not a lead."""
     taxes = ", ".join(f"'{code}'" for code in HOSPICE_TAXONOMY)
+    hospice_codes = ", ".join(f"'{code}'" for code in sorted(HOSPICE_HCPCS))
     return f"""
         {provider_key} NOT IN (
             SELECT p.provider_key
@@ -45,8 +62,12 @@ def _expected_hospice_sql(provider_key: str = "provider_key") -> str:
               AND NOT EXISTS (
                   SELECT 1 FROM agg_hcpcs other
                   WHERE other.provider_key = p.provider_key
-                    AND upper(other.hcpcs) NOT IN ({codes})
+                    AND upper(other.hcpcs) NOT IN ({hospice_codes})
               )
+            UNION
+            {_family_sql(HOME_HEALTH_HCPCS)}
+            UNION
+            {_family_sql(PERSONAL_CARE_HCPCS)}
         )
     """
 
@@ -58,6 +79,20 @@ def _census_explains(paid_growth: float, beneficiaries, prior_beneficiaries) -> 
     if prior <= 0:
         return False
     return (float(beneficiaries) - prior) / prior >= paid_growth * CENSUS_SHARE
+
+
+def _rate_unchanged(paid: float, prior_paid: float, beneficiaries, prior_beneficiaries) -> bool:
+    if beneficiaries is None or prior_beneficiaries is None or prior_paid <= 0:
+        return False
+    current_patients = float(beneficiaries)
+    prior_patients = float(prior_beneficiaries)
+    if current_patients <= 0 or prior_patients <= 0:
+        return False
+    prior_rate = prior_paid / prior_patients
+    if prior_rate <= 0:
+        return False
+    current_rate = paid / current_patients
+    return (current_rate - prior_rate) / prior_rate < RATE_SHARE
 
 
 def _insert(con: duckdb.DuckDBPyConnection, run_id: str, rows: list[tuple]) -> None:
@@ -79,14 +114,16 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
         """
         CREATE OR REPLACE TEMP TABLE agg_hcpcs AS
         SELECT
-            billing_npi AS provider_key,
-            hcpcs,
-            SUM(paid) AS paid,
-            SUM(claim_lines) AS claim_lines,
-            CASE WHEN SUM(claim_lines) > 0 THEN SUM(paid) / SUM(claim_lines) ELSE NULL END AS rate
-        FROM facts_medicaid
-        WHERE billing_npi IS NOT NULL AND trim(billing_npi) <> ''
-        GROUP BY 1, 2
+            f.billing_npi AS provider_key,
+            upper(trim(f.hcpcs)) AS hcpcs,
+            NULLIF(upper(trim(p.state)), '') AS state,
+            SUM(f.paid) AS paid,
+            SUM(f.claim_lines) AS claim_lines,
+            CASE WHEN SUM(f.claim_lines) > 0 THEN SUM(f.paid) / SUM(f.claim_lines) ELSE NULL END AS rate
+        FROM facts_medicaid f
+        LEFT JOIN providers p ON p.provider_key = f.billing_npi
+        WHERE f.billing_npi IS NOT NULL AND trim(f.billing_npi) <> ''
+        GROUP BY 1, 2, 3
         """
     )
     con.execute(
@@ -100,6 +137,20 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
         FROM agg_hcpcs
         WHERE rate IS NOT NULL
         GROUP BY 1
+        """
+    )
+    con.execute(
+        """
+        CREATE OR REPLACE TEMP TABLE state_benchmarks AS
+        SELECT
+            state,
+            hcpcs,
+            COUNT(*) AS n,
+            MEDIAN(rate) AS median_rate,
+            QUANTILE_CONT(rate, 0.9) AS p90
+        FROM agg_hcpcs
+        WHERE rate IS NOT NULL AND state IS NOT NULL
+        GROUP BY 1, 2
         """
     )
     con.execute(
@@ -127,12 +178,20 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
     min_paid = float(r01.get("min_paid", 100000))
     hits = con.execute(
         """
-        SELECT provider_key, hcpcs, rate, paid, claim_lines, median_rate
-        FROM agg_hcpcs
-        JOIN benchmarks USING (hcpcs)
-        WHERE n >= ? AND rate > median_rate * ? AND paid >= ?
+        SELECT provider_key, hcpcs, rate, paid, claim_lines,
+               CASE WHEN s.n >= ? THEN s.median_rate ELSE b.median_rate END AS median_rate,
+               CASE WHEN s.n >= ? THEN 'state' ELSE 'national' END AS peer_scope,
+               state
+        FROM agg_hcpcs a
+        JOIN benchmarks b USING (hcpcs)
+        LEFT JOIN state_benchmarks s USING (state, hcpcs)
+        WHERE paid >= ?
+          AND (
+            (s.n >= ? AND rate > s.median_rate * ?)
+            OR ((s.n IS NULL OR s.n < ?) AND b.n >= ? AND rate > b.median_rate * ?)
+          )
         """,
-        [settings.min_peer_n, multiple, min_paid],
+        [settings.min_peer_n, settings.min_peer_n, min_paid, settings.min_peer_n, multiple, settings.min_peer_n, settings.min_peer_n, multiple],
     ).fetchall()
     _insert(
         con,
@@ -153,11 +212,13 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
                         "median": median,
                         "lines": lines,
                         "paid": paid,
-                        "formula": "(rate - national_median) * claim_lines",
+                        "peer_scope": scope,
+                        "state": state,
+                        "formula": "(rate - peer_median) * claim_lines",
                     }
                 ),
             )
-            for key, hcpcs, rate, paid, lines, median in hits
+            for key, hcpcs, rate, paid, lines, median, scope, state in hits
         ],
     )
 
@@ -165,14 +226,18 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
     min_codes = int(r02.get("min_codes", 2))
     code_hits = con.execute(
         """
-        SELECT provider_key, COUNT(*) AS codes
-        FROM agg_hcpcs
-        JOIN benchmarks USING (hcpcs)
-        WHERE n >= ? AND rate > p90
+        SELECT a.provider_key, COUNT(*) AS codes
+        FROM agg_hcpcs a
+        JOIN benchmarks b USING (hcpcs)
+        LEFT JOIN state_benchmarks s USING (state, hcpcs)
+        WHERE (
+            (s.n >= ? AND a.rate > s.p90)
+            OR ((s.n IS NULL OR s.n < ?) AND b.n >= ? AND a.rate > b.p90)
+          )
         GROUP BY 1
         HAVING COUNT(*) >= ?
         """,
-        [settings.min_peer_n, min_codes],
+        [settings.min_peer_n, settings.min_peer_n, settings.min_peer_n, min_codes],
     ).fetchall()
     _insert(
         con,
@@ -370,6 +435,8 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
         change = paid - prior_paid
         if _census_explains(growth, beneficiaries, prior_beneficiaries):
             continue
+        if _rate_unchanged(paid, prior_paid, beneficiaries, prior_beneficiaries):
+            continue
         patient_growth = None
         if beneficiaries is not None and prior_beneficiaries not in (None, 0):
             patient_growth = (float(beneficiaries) - float(prior_beneficiaries)) / float(prior_beneficiaries)
@@ -440,7 +507,8 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
             (p.incorporation_date IS NOT NULL AND year(p.incorporation_date) >= f.first_year - 1)
             OR (
               p.incorporation_date IS NULL
-              AND (p.enumeration_date IS NULL OR year(p.enumeration_date) >= f.first_year)
+              AND p.enumeration_date IS NOT NULL
+              AND year(p.enumeration_date) >= f.first_year
             )
           )
         """,
@@ -562,6 +630,18 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
           ON l.first_name = o.owner_first
          AND l.last_name = o.owner_last
          AND l.state = o.owner_state
+         AND (
+            o.owner_middle IS NULL OR l.middle_name IS NULL
+            OR o.owner_middle = l.middle_name
+            OR (length(o.owner_middle) = 1 AND left(l.middle_name, 1) = o.owner_middle)
+            OR (length(l.middle_name) = 1 AND left(o.owner_middle, 1) = l.middle_name)
+         )
+         AND (
+            l.reinstated_on IS NULL
+            OR l.reinstated_on > (
+                SELECT MAX(month) FROM facts_medicaid f WHERE f.billing_npi = o.provider_key
+            )
+         )
         JOIN (
             SELECT billing_npi AS provider_key, SUM(paid) AS paid
             FROM facts_medicaid
@@ -617,6 +697,11 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
                 JOIN enrollments e
                   ON lpad(right(regexp_replace(COALESCE(e.ccn, ''), '[^0-9]', '', 'g'), 6), 6, '0')
                    = lpad(right(regexp_replace(COALESCE(m.ccn, ''), '[^0-9]', '', 'g'), 6), 6, '0')
+                 AND (
+                    NULLIF(upper(trim(COALESCE(e.state, ''))), '') IS NULL
+                    OR NULLIF(upper(trim(COALESCE(m.state, ''))), '') IS NULL
+                    OR upper(trim(e.state)) = upper(trim(m.state))
+                 )
                 WHERE m.setting = ?
                   AND m.stays >= ?
                   AND e.npi IN (SELECT provider_key FROM agg_year)
@@ -674,5 +759,163 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
         int(r15.get("min_providers", 8)),
         float(r15.get("multiple_of_median", 2)),
         "R15",
+    )
+
+    r16_rows = con.execute(
+        """
+        SELECT f.billing_npi,
+               f.servicing_npi,
+               SUM(f.paid) AS paid_after,
+               MIN(l.excl_date) AS excl_date
+        FROM facts_medicaid f
+        JOIN leie l ON l.npi = f.servicing_npi
+        WHERE f.servicing_npi IS NOT NULL
+          AND length(f.servicing_npi) = 10
+          AND f.servicing_npi <> f.billing_npi
+          AND (l.excl_date IS NULL OR f.month >= l.excl_date)
+          AND NOT EXISTS (SELECT 1 FROM leie b WHERE b.npi = f.billing_npi)
+        GROUP BY 1, 2
+        HAVING paid_after > 0
+        """
+    ).fetchall()
+    _insert(
+        con,
+        run_id,
+        [
+            (
+                key,
+                "R16",
+                paid_after,
+                0,
+                None,
+                paid_after,
+                json.dumps(
+                    {
+                        "rule": "R16",
+                        "servicing_npi": servicing,
+                        "paid_on_or_after_exclusion": paid_after,
+                        "excl_date": str(excl_date) if excl_date else None,
+                    }
+                ),
+            )
+            for key, servicing, paid_after, excl_date in r16_rows
+        ],
+    )
+
+    r17 = _rule(settings, "R17")
+    min_billers = int(r17.get("min_billers", 3))
+    r17_paid = float(r17.get("min_paid", 250000))
+    scattered = con.execute(
+        """
+        WITH pairs AS (
+            SELECT billing_npi, servicing_npi, SUM(paid) AS paid
+            FROM facts_medicaid
+            WHERE servicing_npi IS NOT NULL
+              AND length(servicing_npi) = 10
+              AND servicing_npi <> billing_npi
+            GROUP BY 1, 2
+        )
+        SELECT a.billing_npi,
+               a.servicing_npi,
+               COUNT(DISTINCT b.billing_npi) + 1 AS billers,
+               SUM(DISTINCT a.paid) AS paid
+        FROM pairs a
+        JOIN pairs b
+          ON a.servicing_npi = b.servicing_npi
+         AND a.billing_npi <> b.billing_npi
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM ownership_edges left_owner
+            JOIN ownership_edges right_owner ON left_owner.owner_key = right_owner.owner_key
+            WHERE left_owner.provider_key = a.billing_npi
+              AND right_owner.provider_key = b.billing_npi
+        )
+        GROUP BY 1, 2
+        HAVING COUNT(DISTINCT b.billing_npi) + 1 >= ?
+           AND SUM(DISTINCT a.paid) >= ?
+        """,
+        [min_billers, r17_paid],
+    ).fetchall()
+    _insert(
+        con,
+        run_id,
+        [
+            (
+                key,
+                "R17",
+                billers,
+                min_billers,
+                None,
+                None,
+                json.dumps({"rule": "R17", "servicing_npi": servicing, "billers": billers, "paid": paid}),
+            )
+            for key, servicing, billers, paid in scattered
+        ],
+    )
+
+    def _care_peer(setting: str, measures: tuple[str, ...], multiple: float, peers: int, rule_id: str) -> None:
+        placeholders = ", ".join("?" for _ in measures)
+        rows = con.execute(
+            f"""
+            WITH linked AS (
+                SELECT e.npi AS provider_key, c.measure, c.score AS metric
+                FROM care_compare c
+                JOIN enrollments e
+                  ON lpad(right(regexp_replace(COALESCE(e.ccn, ''), '[^0-9]', '', 'g'), 6), 6, '0')
+                   = lpad(right(regexp_replace(COALESCE(c.ccn, ''), '[^0-9]', '', 'g'), 6), 6, '0')
+                 AND (
+                    NULLIF(upper(trim(COALESCE(e.state, ''))), '') IS NULL
+                    OR NULLIF(upper(trim(COALESCE(c.state, ''))), '') IS NULL
+                    OR upper(trim(e.state)) = upper(trim(c.state))
+                 )
+                WHERE c.setting = ?
+                  AND c.measure IN ({placeholders})
+                  AND c.score IS NOT NULL
+                  AND e.npi IN (SELECT provider_key FROM agg_year)
+            ),
+            bench AS (
+                SELECT measure, median(metric) AS median_metric, count(*) AS n
+                FROM linked
+                GROUP BY 1
+            )
+            SELECT provider_key, measure, metric, median_metric
+            FROM linked
+            JOIN bench USING (measure)
+            WHERE n >= ? AND metric > median_metric * ?
+            """,
+            [setting, *measures, peers, multiple],
+        ).fetchall()
+        _insert(
+            con,
+            run_id,
+            [
+                (
+                    key,
+                    rule_id,
+                    float(metric),
+                    None if median is None else float(median) * multiple,
+                    None if median is None else float(median),
+                    None,
+                    json.dumps({"rule": rule_id, "measure": measure, "score": float(metric)}),
+                )
+                for key, measure, metric, median in rows
+            ],
+        )
+
+    r18 = _rule(settings, "R18")
+    _care_peer(
+        "hospice",
+        ("Early live discharges", "Late live discharges"),
+        float(r18.get("multiple_of_median", 2)),
+        int(r18.get("min_providers", 8)),
+        "R18",
+    )
+    r19 = _rule(settings, "R19")
+    _care_peer(
+        "home-health",
+        ("PPR Risk-Standardized Rate",),
+        float(r19.get("multiple_of_median", 2)),
+        int(r19.get("min_providers", 8)),
+        "R19",
     )
     return con.execute("SELECT COUNT(*) FROM flags WHERE run_id = ?", [run_id]).fetchone()[0]

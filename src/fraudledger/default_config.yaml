@@ -9,6 +9,8 @@ min_ownership_pct: 5
 louvain_resolution: 1.0
 louvain_seed: 42
 cluster_bonus: 1.5
+cluster_bonus_max_providers: 40
+address_link_max: 25
 multi_flag_bonus: 2.0
 multi_flag_min: 3
 tier_critical: 8
@@ -25,6 +27,10 @@ sources:
   hospice_enrollments_url: ""
   home_health_owners_url: ""
   home_health_enrollments_url: ""
+  medicare_hospice_url: ""
+  medicare_home_health_url: ""
+  hospice_care_url: ""
+  home_health_care_url: ""
 
 rules:
   R01:
@@ -94,6 +100,24 @@ rules:
     title: High Medicare home-health visits per episode
     multiple_of_median: 2.0
     min_episodes: 30
+    min_providers: 8
+    weight: 2
+  R16:
+    title: Servicing NPI on the exclusion list
+    weight: 3
+  R17:
+    title: One servicing NPI paid through several billers
+    min_billers: 3
+    min_paid: 250000
+    weight: 2
+  R18:
+    title: High Medicare hospice live discharge
+    multiple_of_median: 2.0
+    min_providers: 8
+    weight: 2
+  R19:
+    title: High Medicare home-health readmission
+    multiple_of_median: 2.0
     min_providers: 8
     weight: 2
 

@@ -102,7 +102,9 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         text_parts.append("")
     text_parts.append("Methodology")
     text_parts.append(f"Config SHA-256: {settings.config_sha256}")
-    text_parts.append(f"Peer group: national HCPCS median. A code is used only when at least {settings.min_peer_n} providers billed it.")
+    text_parts.append(
+        f"Peer group: the provider's state when at least {settings.min_peer_n} providers in that state billed the code. Otherwise the national HCPCS median."
+    )
     text_parts.append("Rules are not mutually exclusive. One provider can trip several at once.")
     for rule_id, blurb in RULE_BLURB.items():
         cfg = settings.rules.get(rule_id) or {}

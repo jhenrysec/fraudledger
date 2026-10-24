@@ -29,6 +29,9 @@ def build_communities(con: duckdb.DuckDBPyConnection, settings: Settings, run_id
                    COUNT(*) OVER (PARTITION BY address, city, state) AS n
             FROM providers
             WHERE address IS NOT NULL AND address <> ''
+              AND upper(address) NOT LIKE '%PO BOX%'
+              AND upper(address) NOT LIKE '%P.O. BOX%'
+              AND upper(address) NOT LIKE '%POST OFFICE BOX%'
         )
         SELECT a.provider_key, b.provider_key
         FROM grouped a
@@ -37,8 +40,9 @@ def build_communities(con: duckdb.DuckDBPyConnection, settings: Settings, run_id
          AND a.city = b.city
          AND a.state = b.state
          AND a.provider_key < b.provider_key
-        WHERE a.n >= 3
-        """
+        WHERE a.n >= 3 AND a.n <= ?
+        """,
+        [settings.address_link_max],
     ).fetchall()
     for left, right in address_rows:
         graph.add_edge(f"provider:{left}", f"provider:{right}", weight=1.2)

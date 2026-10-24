@@ -46,13 +46,13 @@
     </tbody>
   </table>
   <p>R11 is the billing NPI on the OIG exclusion list with a payment on or after the exclusion date. Its own weight is already in the sum. The extra {{ "%.1f"|format(index.r11_extra) }} is added only for R11. With the default R11 weight of 5, that extra alone reaches the Critical cutoff. R13 is a separate owner name-and-state match. It does not get that extra, and it is not Critical by itself.</p>
-  <p>The cluster bonus is not “this provider has an owner.” It applies only when two or more flagged providers sit in the same ownership community. The <a href="#groups">group sort key</a> on the Groups page is a different number. A value in the hundreds there is not a provider score.</p>
-  <p>For a cost outlier, the peer-gap shown beside the score is <span class="mono">(paid per line − national median) × claim lines</span>. That is a gap versus other billers of the same code. It is not a loss amount and not an amount to type on an intake form.</p>
+  <p>The cluster bonus is not “this provider has an owner.” It applies only when two or more flagged providers sit in the same ownership community, and that community has at most {{ index.cluster_bonus_max }} providers. A larger community does not add the bonus. The <a href="#groups">group sort key</a> on the Groups page is a different number. A value in the hundreds there is not a provider score.</p>
+  <p>For a cost outlier, the peer-gap shown beside the score is <span class="mono">(paid per line − peer median) × claim lines</span>. The peer group is that provider’s state when at least {{ index.min_peer_n }} providers in the state billed the code. Otherwise it is national. It is not a loss amount and not an amount to type on an intake form.</p>
 </section>
 
 <section class="card" id="groups">
   <h2>Ownership groups</h2>
-  <p>A group is providers connected by a shared owner, or by the same street address when at least three providers use it. The group number is an id. The list is ordered so groups with more billing indicators come first.</p>
+  <p>A group is providers connected by a shared owner, or by the same street address when at least three and at most {{ index.address_link_max }} providers use it. A post-office box is not used as a shared address. The group number is an id. The list is ordered so groups with more billing indicators come first.</p>
   <p>Open a group and the page lists the shared owners and the shared street addresses by name. An owner is listed there only when that same associate is on at least two providers in the group. An address is listed when at least two providers in the group use that street, city, and state.</p>
   <p>The group sort key is not the provider score. For the example of 167 providers with an indicator out of 687, the sort key is about 356. Almost all of that is 167 × 2. The dollar total adds its natural log, about 17 points even at $25 million. Group size adds at most 5 points. None of that means the group is “356 bad.” It means 167 members each have at least one indicator.</p>
   <p>The peer-gap dollars on a group are those providers’ gaps added together. They are not the amount paid, and they are not a loss amount.</p>
@@ -60,7 +60,7 @@
 
 <section class="card" id="indicators">
   <h2>Indicators</h2>
-  <p>Indicators are not mutually exclusive. A provider can carry several at once. R01 and R02 skip a procedure code when fewer than {{ index.min_peer_n }} providers billed it. The <a href="/rules">Rules</a> page repeats these cutoffs next to the config hash for the run.</p>
+  <p>Indicators are not mutually exclusive. A provider can carry several at once. R01 and R02 use a state peer group when at least {{ index.min_peer_n }} providers in that state billed the code. Otherwise they use the national group, and they skip a code when that group is also smaller than {{ index.min_peer_n }}. R16 and R17 look at the servicing NPI. R18 and R19 are Care Compare corroboration. They do not make a provider Critical by themselves. The <a href="/rules">Rules</a> page repeats these cutoffs next to the config hash for the run.</p>
   <table>
     <thead><tr><th>Code</th><th>Name</th><th class="num">Weight</th><th>What it means</th><th>Cutoff in this config</th></tr></thead>
     <tbody>
@@ -144,11 +144,13 @@
     <li>The owner file is keyed by enrollment id. Each NPI on that enrollment receives a copy of the owner row. A provider page shows the rows for that NPI only.</li>
     <li>Medicaid <span class="mono">TOTAL_PATIENTS</span> is stored as the beneficiary count. Counts are not added across months. Rules that need a patient count use the busiest month, or the average month inside a year for the growth test.</li>
     <li>Year-over-year growth is <span class="mono">(this year paid − prior year paid) / prior year paid</span>. If the prior year paid nothing, growth is not computed and the jump is not flagged.</li>
-    <li>A payment jump is dropped from R07 and R08 when both years have a patient count and the patient count grew at least {{ "%g"|format(index.census_share * 100) }}% as fast as the dollars.</li>
-    <li>R05 and R06 do not flag a provider whose taxonomy is {{ index.hospice_taxonomy }} and whose billed codes are all hospice codes. A home-health taxonomy billing one hospice code is still eligible.</li>
-    <li>R09 and R10 use the incorporation date from the enrollment file when that file has one. That date is not a Medicare enrollment date. An old company with a new enrollment keeps the incorporation date, and falls back to the NPPES enumeration date only when incorporation is missing.</li>
-    <li>R13 matches an owner to the exclusion list on exact first name, last name, and state. The agency name is not compared. The match does not get the R11 bonus.</li>
-    <li>R14 and R15 use the Medicare post-acute provider file. The join is the last six digits of the enrollment CCN. The provider is compared with the median of other providers in that file, not with the Medicaid paid amount.</li>
+    <li>A payment jump is dropped from R07 and R08 when both years have a patient count and the patient count grew at least {{ "%g"|format(index.census_share * 100) }}% as fast as the dollars. It is also dropped when paid per patient grew by less than {{ "%g"|format(index.rate_share * 100) }}%.</li>
+    <li>R05 and R06 do not flag a provider whose taxonomy is {{ index.hospice_taxonomy }} and whose billed codes are all hospice codes. They also do not flag a provider whose codes are all home-health codes, or all personal-care codes, even without that taxonomy. A home-health taxonomy billing only a hospice code is still eligible.</li>
+    <li>R09 requires an incorporation date or an NPPES enumeration date. A missing date is not treated as new. R09 and R10 use the incorporation date from the enrollment file when that file has one. That date is not a Medicare enrollment date. An old company with a new enrollment keeps the incorporation date, and falls back to the NPPES enumeration date only when incorporation is missing.</li>
+    <li>R13 matches an owner to the exclusion list on exact first name, last name, and state. When both sides have a middle name, that name must match too, including an initial against the full middle name. A person reinstated on or before the latest paid month is not flagged. The agency name is not compared. The match does not get the R11 bonus.</li>
+    <li>R14 and R15 use the Medicare post-acute provider file. The join is the last six digits of the enrollment CCN. When both files have a state, the state must match. The provider is compared with the median of other providers in that file, not with the Medicaid paid amount.</li>
+    <li>R16 flags the billing NPI when a different servicing NPI is on the exclusion list and the payment is on or after the exclusion date. R11 stays reserved for the billing NPI itself.</li>
+    <li>R18 and R19 use Care Compare. R18 keeps early and late live-discharge percentages. R19 keeps the home-health potentially preventable readmission rate. A score above twice the median, with at least eight peers, is corroboration. It is not a Critical tier by itself. HCRIS cost reports, SAM.gov, and state Medicaid exclusion lists are not loaded.</li>
   </ul>
 </section>
 

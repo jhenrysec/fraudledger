@@ -59,9 +59,11 @@ def load_demo(con: duckdb.DuckDBPyConnection, settings: Settings) -> None:
     for month, rate in enumerate(outlier_rates, start=1):
         add("1999990001", "T1019", 2024, month, 400, rate, 40)
 
-    # R06 flat billing at the peer rate, above the dollar floor, below the mill floor.
+    # R06 flat billing at the peer rate. The second code keeps this from looking like
+    # ordinary personal-care billing, which is no longer flagged for being narrow or flat.
     for month in range(1, 9):
         add("1999990002", "T1019", 2024, month, 800, 50, 40)
+        add("1999990002", "T2042", 2024, month, 20, 50, 40)
 
     # R11 excluded, otherwise ordinary and small.
     for month in range(1, 7):

@@ -13,6 +13,7 @@ from fraudledger.ingest.public import (
     ingest_medicare_use,
     ingest_nppes,
     ingest_ownership,
+    ingest_care_compare,
 )
 from fraudledger.settings import Settings
 
@@ -33,6 +34,8 @@ LABELS = {
     "home-health-enrollments": "Home health enrollments",
     "medicare-hospice": "Medicare hospice use",
     "medicare-home-health": "Medicare home health use",
+    "hospice-care": "Hospice Care Compare",
+    "home-health-care": "Home health Care Compare",
 }
 
 
@@ -92,6 +95,11 @@ def pull(
         setting = "hospice" if key == "medicare-hospice" else "home-health"
         count = ingest_medicare_use(con, settings, url=chosen, setting=setting)
         return f"Medicare {setting} provider rows: {count}. Source {chosen}"
+    if key in {"hospice-care", "home-health-care"}:
+        chosen = resolve_file_url(settings, key, url)
+        setting = "hospice" if key == "hospice-care" else "home-health"
+        count = ingest_care_compare(con, settings, url=chosen, setting=setting)
+        return f"Care Compare {setting} rows: {count}. Source {chosen}"
     raise SystemExit(f"Unknown source: {key}")
 
 
@@ -127,7 +135,7 @@ def plan_working(settings: Settings) -> list:
         steps.extend(plan(settings, "nppes"))
     except SystemExit as exc:
         steps.append(("skip", str(exc), {}))
-    for key in ("medicare-hospice", "medicare-home-health"):
+    for key in ("medicare-hospice", "medicare-home-health", "hospice-care", "home-health-care"):
         try:
             steps.extend(plan(settings, key))
         except SystemExit as exc:
@@ -172,6 +180,10 @@ def load_local(
         setting = "hospice" if key == "medicare-hospice" else "home-health"
         count = ingest_medicare_use(con, settings, path=local, url=url, setting=setting)
         return f"Medicare {setting} provider rows: {count}. Source {url}"
+    if key in {"hospice-care", "home-health-care"}:
+        setting = "hospice" if key == "hospice-care" else "home-health"
+        count = ingest_care_compare(con, settings, path=local, url=url, setting=setting)
+        return f"Care Compare {setting} rows: {count}. Source {url}"
     raise SystemExit(f"Unknown source: {key}")
 
 
@@ -189,7 +201,7 @@ def pull_working(con: duckdb.DuckDBPyConnection, settings: Settings) -> str:
         parts.append(pull(con, settings, "nppes"))
     except SystemExit as exc:
         parts.append(f"NPPES skipped: {exc}")
-    for key in ("medicare-hospice", "medicare-home-health"):
+    for key in ("medicare-hospice", "medicare-home-health", "hospice-care", "home-health-care"):
         try:
             parts.append(pull(con, settings, key))
         except SystemExit as exc:

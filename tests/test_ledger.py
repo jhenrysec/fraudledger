@@ -359,10 +359,15 @@ class ReaderIndexTests(unittest.TestCase):
             self.assertIn("Do not add it to role 34", page.text)
             self.assertIn("How to read", page.text)
             self.assertIn("role strength", page.text)
+            self.assertIn("post-office box", page.text)
+            self.assertIn("middle name", page.text)
+            rules = client.get("/rules")
+            self.assertEqual(rules.status_code, 200)
+            self.assertIn("at most 40", rules.text)
             notes = reading_notes(settings)
             self.assertIn("Add role 34 once per owner", notes)
             self.assertIn("at least 8", notes)
-            lowered = (page.text + notes).lower()
+            lowered = (page.text + rules.text + notes).lower()
             for phrase in BANNED:
                 self.assertNotIn(phrase, lowered)
 
@@ -436,6 +441,33 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(latest_csv_url(catalog, "Hospice All Owners"), "https://data.cms.gov/new.csv")
         with self.assertRaises(SystemExit):
             validate_http_url("file:///tmp/secret.csv")
+
+    def test_provider_catalog_reads_nested_csv(self) -> None:
+        from fraudledger.ingest.catalog import provider_csv_url
+
+        catalog = [
+            {
+                "title": "Hospice - Provider Data",
+                "distribution": [
+                    {"data": {"downloadURL": "https://data.cms.gov/hospice.json"}},
+                    {"data": {"downloadURL": "https://data.cms.gov/hospice.csv?cache=1"}},
+                ],
+            },
+            {
+                "title": "Home Health Care Agencies",
+                "distribution": [{"downloadURL": "https://data.cms.gov/home.csv", "mediaType": "text/csv"}],
+            },
+        ]
+        self.assertEqual(
+            provider_csv_url(catalog, "Hospice - Provider Data"),
+            "https://data.cms.gov/hospice.csv?cache=1",
+        )
+        self.assertEqual(
+            provider_csv_url(catalog, "Home Health Care Agencies"),
+            "https://data.cms.gov/home.csv",
+        )
+        with self.assertRaises(SystemExit):
+            provider_csv_url(catalog, "Missing title")
 
     def test_enrollment_npi_links_owner_edge(self) -> None:
         from fraudledger.ingest.public import ingest_enrollments, ingest_ownership
@@ -777,6 +809,207 @@ class StrengthTests(unittest.TestCase):
             self.assertIn("R10", new_npi)
             self.assertIn("R14", long_stay)
             self.assertNotIn("R14", ordinary)
+
+
+class AccuracyTests(unittest.TestCase):
+    def _ready(self) -> tuple:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        settings = load_settings(data_dir=tmp.name)
+        settings.ensure_dirs()
+        con = connect(settings.db_path)
+        self.addCleanup(con.close)
+        return tmp, settings, con
+
+    def _score(self, con, settings, path: Path) -> str:
+        ingest_medicaid(con, settings, path=str(path), focus="priority")
+        return "ACCURACY"
+
+    def test_expected_family_and_missing_dates(self) -> None:
+        from fraudledger.detect.engine import apply_rules
+
+        _tmp, settings, con = self._ready()
+        path = settings.data_dir / "facts.csv"
+        path.write_text(
+            "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+            "7100000001,T1019,2024-06,2000000,10\n"
+            "7100000002,T1019,2024-06,1000000,10\n"
+            "7100000002,T2042,2024-06,1000000,10\n"
+            "7100000003,T1019,2024-06,1200000,10\n"
+            "7100000004,T1019,2024-06,1200000,10\n",
+            encoding="utf-8",
+        )
+        run_id = self._score(con, settings, path)
+        con.execute(
+            """
+            INSERT INTO providers (provider_key, npi, name, enumeration_date, origin)
+            VALUES ('7100000004', '7100000004', 'Dated', DATE '2024-03-01', 'public')
+            """
+        )
+        apply_rules(con, settings, run_id)
+        personal = flags_for(con, run_id, "7100000001")
+        mixed = flags_for(con, run_id, "7100000002")
+        undated = flags_for(con, run_id, "7100000003")
+        dated = flags_for(con, run_id, "7100000004")
+        self.assertNotIn("R05", personal)
+        self.assertNotIn("R09", personal)
+        self.assertIn("R05", mixed)
+        self.assertNotIn("R09", undated)
+        self.assertIn("R09", dated)
+        self.assertNotIn("R05", dated)
+
+    def test_state_peers_suppress_a_high_rate_state(self) -> None:
+        from fraudledger.detect.engine import apply_rules
+
+        _tmp, settings, con = self._ready()
+        lines = ["BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES"]
+        providers = []
+        for index in range(30):
+            npi = f"610000{index:04d}"
+            lines.append(f"{npi},T1019,2024-06,2000,10")
+            providers.append((npi, "TX"))
+        lines.append("6100000031,T1019,2024-06,250000,1000")
+        providers.append(("6100000031", "TX"))
+        for index in range(90):
+            npi = f"620000{index:04d}"
+            lines.append(f"{npi},T1019,2024-06,400,10")
+            providers.append((npi, "CA"))
+        lines.append("6200000091,T1019,2024-06,150000,1000")
+        providers.append(("6200000091", "CA"))
+        path = settings.data_dir / "peers.csv"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        run_id = self._score(con, settings, path)
+        con.executemany(
+            """
+            INSERT INTO providers (provider_key, npi, name, state, origin)
+            VALUES (?, ?, 'Peer', ?, 'public')
+            """,
+            [(npi, npi, state) for npi, state in providers],
+        )
+        apply_rules(con, settings, run_id)
+        self.assertNotIn("R01", flags_for(con, run_id, "6100000031"))
+        self.assertIn("R01", flags_for(con, run_id, "6200000091"))
+
+    def test_owner_middle_name_and_reinstatement(self) -> None:
+        from fraudledger.detect.engine import apply_rules
+
+        _tmp, settings, con = self._ready()
+        path = settings.data_dir / "owners.csv"
+        path.write_text(
+            "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+            "3111111111,T1019,2024-06,1000,1\n"
+            "3111111112,T1019,2024-06,1000,1\n"
+            "3111111113,T1019,2024-01,1000,1\n"
+            "3111111114,T1019,2024-06,1000,1\n",
+            encoding="utf-8",
+        )
+        run_id = self._score(con, settings, path)
+        con.execute(
+            """
+            INSERT INTO ownership_edges (
+                owner_key, owner_name, provider_key, percentage, role_code, role_strength,
+                edge_weight, origin, owner_first, owner_middle, owner_last, owner_state
+            ) VALUES
+                ('M1', 'ANN MARIE LEE', '3111111111', 100, '34', 3, 3, 'public', 'ANN', 'MARIE', 'LEE', 'TX'),
+                ('M2', 'BOB ALAN DOE', '3111111112', 100, '34', 3, 3, 'public', 'BOB', 'ALAN', 'DOE', 'TX'),
+                ('M3', 'CARL JONES', '3111111113', 100, '34', 3, 3, 'public', 'CARL', 'J', 'JONES', 'TX'),
+                ('M4', 'DANA SMITH', '3111111114', 100, '34', 3, 3, 'public', 'DANA', NULL, 'SMITH', 'TX')
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO leie (
+                npi, name, excl_type, excl_date, first_name, last_name, state, middle_name, reinstated_on, origin
+            ) VALUES
+                (NULL, 'ANN PAT LEE', '1128a1', DATE '2020-01-01', 'ANN', 'LEE', 'TX', 'PAT', NULL, 'public'),
+                (NULL, 'BOB ALAN DOE', '1128a1', DATE '2020-01-01', 'BOB', 'DOE', 'TX', 'ALAN', DATE '2024-06-01', 'public'),
+                (NULL, 'CARL JAMES JONES', '1128a1', DATE '2020-01-01', 'CARL', 'JONES', 'TX', 'JAMES', DATE '2024-06-01', 'public'),
+                (NULL, 'DANA X SMITH', '1128a1', DATE '2020-01-01', 'DANA', 'SMITH', 'TX', 'X', NULL, 'public')
+            """
+        )
+        apply_rules(con, settings, run_id)
+        self.assertNotIn("R13", flags_for(con, run_id, "3111111111"))
+        self.assertNotIn("R13", flags_for(con, run_id, "3111111112"))
+        self.assertIn("R13", flags_for(con, run_id, "3111111113"))
+        self.assertIn("R13", flags_for(con, run_id, "3111111114"))
+
+    def test_servicing_exclusion_is_not_a_billing_exclusion(self) -> None:
+        from fraudledger.detect.engine import apply_rules
+
+        _tmp, settings, con = self._ready()
+        path = settings.data_dir / "service.csv"
+        path.write_text(
+            "BILLING_PROVIDER_NPI_NUM,SERVICING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+            "4111111111,4222222222,T1019,2024-06,50000,10\n",
+            encoding="utf-8",
+        )
+        run_id = self._score(con, settings, path)
+        con.execute(
+            """
+            INSERT INTO leie (npi, name, excl_type, excl_date, origin)
+            VALUES ('4222222222', 'SERVICER', '1128a1', DATE '2020-01-01', 'public')
+            """
+        )
+        apply_rules(con, settings, run_id)
+        found = flags_for(con, run_id, "4111111111")
+        self.assertIn("R16", found)
+        self.assertNotIn("R11", found)
+
+    def test_care_compare_and_state_disagreeing_ccn(self) -> None:
+        from fraudledger.detect.engine import apply_rules
+        from fraudledger.ingest.public import ingest_care_compare, ingest_medicare_use
+
+        _tmp, settings, con = self._ready()
+        lines = ["BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES"]
+        care = ["CMS Certification Number (CCN),State,Measure Name,Score"]
+        medicare = ["YEAR,PRVDR_ID,STATE,TOT_EPSD_STAY_CNT,TOT_SRVC_DAYS"]
+        enrollments = []
+        for index in range(1, 11):
+            npi = f"500000{index:04d}"
+            ccn = f"{150000 + index:06d}"
+            lines.append(f"{npi},T1019,2024-03,1000,1")
+            enrollments.append((f"E{index}", npi, ccn, "TX"))
+            if index <= 8:
+                care.append(f"{ccn},TX,Early live discharges,10")
+                medicare.append(f"2024,{ccn},TX,100,5000")
+            elif index == 9:
+                care.append(f"{ccn},TX,Early live discharges,40")
+                care.append(f"{ccn},TX,Burdensome transitions,90")
+                medicare.append(f"2024,{ccn},TX,100,20000")
+            else:
+                care.append(f"{ccn},CA,Early live discharges,90")
+                medicare.append(f"2024,{ccn},CA,100,20000")
+        facts = settings.data_dir / "facts.csv"
+        facts.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        care_path = settings.data_dir / "care.csv"
+        care_path.write_text("\n".join(care) + "\n", encoding="utf-8")
+        medicare_path = settings.data_dir / "medicare.csv"
+        medicare_path.write_text("\n".join(medicare) + "\n", encoding="utf-8")
+        run_id = self._score(con, settings, facts)
+        con.executemany(
+            """
+            INSERT INTO enrollments (enrollment_id, npi, ccn, state, origin)
+            VALUES (?, ?, ?, ?, 'public')
+            """,
+            enrollments,
+        )
+        self.assertEqual(ingest_care_compare(con, settings, path=str(care_path), setting="hospice"), 10)
+        stored = {
+            row[0]
+            for row in con.execute("SELECT DISTINCT measure FROM care_compare").fetchall()
+        }
+        self.assertEqual(stored, {"Early live discharges"})
+        ingest_medicare_use(con, settings, path=str(medicare_path), setting="hospice")
+        apply_rules(con, settings, run_id)
+        ordinary = flags_for(con, run_id, "5000000001")
+        outlier = flags_for(con, run_id, "5000000009")
+        mismatch = flags_for(con, run_id, "5000000010")
+        self.assertNotIn("R18", ordinary)
+        self.assertNotIn("R14", ordinary)
+        self.assertIn("R18", outlier)
+        self.assertIn("R14", outlier)
+        self.assertNotIn("R18", mismatch)
+        self.assertNotIn("R14", mismatch)
 
 
 if __name__ == "__main__":

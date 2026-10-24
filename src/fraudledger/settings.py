@@ -47,6 +47,8 @@ class Settings:
     louvain_resolution: float
     louvain_seed: int
     cluster_bonus: float
+    cluster_bonus_max_providers: int
+    address_link_max: int
     multi_flag_bonus: float
     multi_flag_min: int
     tier_critical: float
@@ -112,6 +114,8 @@ def load_settings(
         louvain_resolution=float(merged.get("louvain_resolution", 1.0)),
         louvain_seed=int(merged.get("louvain_seed", 42)),
         cluster_bonus=float(merged.get("cluster_bonus", 1.5)),
+        cluster_bonus_max_providers=int(merged.get("cluster_bonus_max_providers", 40)),
+        address_link_max=int(merged.get("address_link_max", 25)),
         multi_flag_bonus=float(merged.get("multi_flag_bonus", 2.0)),
         multi_flag_min=int(merged.get("multi_flag_min", 3)),
         tier_critical=float(merged.get("tier_critical", 8)),

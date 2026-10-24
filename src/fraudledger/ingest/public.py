@@ -190,6 +190,8 @@ def ingest_leie(
         excl_type = lookup.get("excltype")
         excl_date = lookup.get("excldate")
         state_col = lookup.get("state")
+        middle_col = lookup.get("midname")
+        reinstate_col = lookup.get("reindate")
         con.execute("DELETE FROM leie WHERE origin = 'public'")
         batch = []
 
@@ -215,6 +217,8 @@ def ingest_leie(
                     first_name,
                     last_name,
                     state_name,
+                    _name_key(row.get(middle_col) if middle_col else None),
+                    _parse_date(row.get(reinstate_col) if reinstate_col else None),
                     "public",
                 )
             )
@@ -230,8 +234,9 @@ def ingest_leie(
                 con.executemany(
                     """
                     INSERT INTO leie (
-                        npi, name, excl_type, excl_date, first_name, last_name, state, origin
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        npi, name, excl_type, excl_date, first_name, last_name, state,
+                        middle_name, reinstated_on, origin
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     batch,
                 )
@@ -241,8 +246,9 @@ def ingest_leie(
             con.executemany(
                 """
                 INSERT INTO leie (
-                    npi, name, excl_type, excl_date, first_name, last_name, state, origin
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    npi, name, excl_type, excl_date, first_name, last_name, state,
+                    middle_name, reinstated_on, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 batch,
             )
@@ -283,6 +289,7 @@ def ingest_ownership(
         owner_name = pick("organization_name_owner", "owner_name", "associate_name")
         org_name = pick("organization_name", "org_name", "provider_name")
         first_name = pick("first_name_owner", "owner_first_name", "first_name")
+        middle_name = pick("middle_name_owner", "owner_middle_name", "middle_name")
         last_name = pick("last_name_owner", "owner_last_name", "last_name")
         owner_state = pick("state_owner", "owner_state")
         associated = pick("association_date_owner", "association_date", "effective_date")
@@ -354,6 +361,7 @@ def ingest_ownership(
                         f"{kind}:{enrollment_id}:{owner_key}:{role_code}:{provider_key}",
                         f"public:{kind}",
                         _name_key(row.get(first_name) if first_name else None),
+                        _name_key(row.get(middle_name) if middle_name else None),
                         _name_key(row.get(last_name) if last_name else None),
                         _state_key(row.get(owner_state) if owner_state else None),
                     )
@@ -376,8 +384,8 @@ def ingest_ownership(
                 INSERT INTO ownership_edges (
                     owner_key, owner_name, provider_key, percentage, role_code,
                     role_strength, edge_weight, effective_date, edge_source_id, origin,
-                    owner_first, owner_last, owner_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    owner_first, owner_middle, owner_last, owner_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 batch,
             )
@@ -653,6 +661,7 @@ def ingest_medicare_use(
         return None
 
     provider_id = pick("prvdr_id", "ccn", "provider_id")
+    state_col = pick("state", "prvdr_state_cd", "provider_state")
     stays_col = pick("tot_epsd_stay_cnt", "stays", "episodes")
     days_col = pick("tot_srvc_days", "service_days")
     if not provider_id or not stays_col or not days_col:
@@ -671,11 +680,12 @@ def ingest_medicare_use(
     visit_terms = [num(column) for column in (nursing, social, aide) if column]
     visits = " + ".join(f"COALESCE({term}, 0)" for term in visit_terms) if visit_terms else "CAST(NULL AS DOUBLE)"
     year_sql = f'try_cast("{year_col}" AS INTEGER)' if year_col else "CAST(NULL AS INTEGER)"
+    state_sql = f'NULLIF(upper(trim(CAST("{state_col}" AS VARCHAR))), \'\')' if state_col else "CAST(NULL AS VARCHAR)"
     origin = f"public:medicare-{setting}"
     con.execute("DELETE FROM medicare_use WHERE origin = ?", [origin])
     con.execute(
         f"""
-        INSERT INTO medicare_use (ccn, setting, year, stays, service_days, visits, rhc_days_pct, origin)
+        INSERT INTO medicare_use (ccn, setting, year, stays, service_days, visits, rhc_days_pct, state, origin)
         SELECT
             regexp_replace(CAST("{provider_id}" AS VARCHAR), '[^0-9]', '', 'g'),
             ?,
@@ -684,6 +694,7 @@ def ingest_medicare_use(
             {num(days_col)},
             {visits},
             {num(rhc_col)},
+            {state_sql},
             ?
         FROM read_csv(?, header=true, all_varchar=true, ignore_errors=true, encoding='{duck}')
         WHERE regexp_full_match(regexp_replace(CAST("{provider_id}" AS VARCHAR), '[^0-9]', '', 'g'), '[0-9]+')
@@ -692,4 +703,93 @@ def ingest_medicare_use(
     )
     count = con.execute("SELECT COUNT(*) FROM medicare_use WHERE origin = ?", [origin]).fetchone()[0]
     _record_snapshot(con, f"medicare-{setting}", locator, source, digest, note)
+    return int(count)
+
+
+def ingest_care_compare(
+    con: duckdb.DuckDBPyConnection,
+    settings: Settings,
+    path: str | None = None,
+    url: str | None = None,
+    setting: str = "hospice",
+) -> int:
+    """Load a CMS Care Compare provider file.
+
+    Hospice files are one row per measure. Home health files are one row per agency.
+    """
+    settings.ensure_dirs()
+    source, locator = _input_path(settings, path, url, f"care-{setting}")
+    readable = materialize(source, settings.data_dir / "tmp" / "unpack")
+    digest, note = store_raw(settings.data_dir, source, f"care-{setting}", locator, readable.name)
+    enc = text_encoding(readable)
+    duck = "cp1252" if enc == "cp1252" else "utf-8"
+    header_con = duckdb.connect()
+    names = [
+        row[0]
+        for row in header_con.execute(
+            f"""
+            DESCRIBE SELECT * FROM read_csv(
+                ?, header=true, sample_size=200, all_varchar=true, ignore_errors=true, encoding='{duck}'
+            )
+            """,
+            [str(readable)],
+        ).fetchall()
+    ]
+    header_con.close()
+    lookup = {normalize_header(name): name for name in names}
+
+    def pick(*candidates: str) -> str | None:
+        for candidate in candidates:
+            if candidate in lookup:
+                return lookup[candidate]
+        return None
+
+    ccn_col = pick("cms_certification_number_ccn", "cms_certification_number", "ccn")
+    state_col = pick("state")
+    if not ccn_col:
+        raise SystemExit(f"Care Compare file has no certification number. Headers: {names[:12]}")
+    origin = f"public:care-{setting}"
+    con.execute("DELETE FROM care_compare WHERE origin = ?", [origin])
+    reader = f"read_csv(?, header=true, all_varchar=true, ignore_errors=true, encoding='{duck}')"
+    state_sql = f'NULLIF(upper(trim("{state_col}")), \'\')' if state_col else "CAST(NULL AS VARCHAR)"
+    ccn_sql = f'regexp_replace(CAST("{ccn_col}" AS VARCHAR), \'[^0-9]\', \'\', \'g\')'
+    measure_col = pick("measure_name")
+    score_col = pick("score")
+    if measure_col and score_col:
+        con.execute(
+            f"""
+            INSERT INTO care_compare (ccn, state, setting, measure, score, origin)
+            SELECT {ccn_sql}, {state_sql}, ?,
+                   CASE
+                     WHEN "{measure_col}" ILIKE 'Early live discharges%' THEN 'Early live discharges'
+                     WHEN "{measure_col}" ILIKE 'Late live discharges%' THEN 'Late live discharges'
+                   END,
+                   try_cast("{score_col}" AS DOUBLE),
+                   ?
+            FROM {reader}
+            WHERE "{measure_col}" ILIKE 'Early live discharges%'
+               OR "{measure_col}" ILIKE 'Late live discharges%'
+            """,
+            [setting, origin, str(readable)],
+        )
+    else:
+        wide = pick("ppr_risk_standardized_rate")
+        if not wide:
+            raise SystemExit(f"Care Compare file has no measure column. Headers: {names[:12]}")
+        con.execute(
+            f"""
+            INSERT INTO care_compare (ccn, state, setting, measure, score, origin)
+            SELECT {ccn_sql}, {state_sql}, ?, 'PPR Risk-Standardized Rate',
+                   try_cast("{wide}" AS DOUBLE), ?
+            FROM {reader}
+            WHERE try_cast("{wide}" AS DOUBLE) IS NOT NULL
+            """,
+            [setting, origin, str(readable)],
+        )
+    count = con.execute(
+        "SELECT COUNT(*) FROM care_compare WHERE origin = ? AND score IS NOT NULL AND ccn <> ''",
+        [origin],
+    ).fetchone()[0]
+    con.execute("DELETE FROM care_compare WHERE origin = ? AND (score IS NULL OR ccn = '')", [origin])
+    _record_snapshot(con, f"care-{setting}", locator, source, digest, note)
     return int(count)

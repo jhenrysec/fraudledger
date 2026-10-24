@@ -26,7 +26,7 @@ bash install.sh --demo       # also load fictional NPIs; not for a report
 bash install.sh --no-start   # install services but do not start the UI
 ```
 
-The public working set is the real review path. It loads the OIG exclusion list, hospice and home-health enrollments and owners, NPPES when the CMS index is online, the latest Medicare hospice and home-health provider files, and the Medicaid Provider Spending extract. Only hospice, home health, and personal-care procedure codes are written into the warehouse. Monthly patient counts are kept. A payment jump that tracks the patient count is not flagged. A hospice that bills only hospice codes is not flagged for a narrow or flat pattern. An incorporation date, when the enrollment file has one, is used before the NPPES date. An owner name and state can match the exclusion list. The agency name is not matched. The download is still the full multi-gigabyte extract, so leave a large free disk and at least 16 GB of RAM. A smaller machine can load the LEIE and the owner files, or `bash install.sh --demo` for the fictional fixture.
+The public working set is the real review path. It loads the OIG exclusion list, hospice and home-health enrollments and owners, NPPES when the CMS index is online, the latest Medicare hospice and home-health provider files, Hospice Care Compare, Home Health Care Compare, and the Medicaid Provider Spending extract. Only hospice, home health, and personal-care procedure codes are written into the warehouse. Monthly patient counts are kept. A payment jump that tracks the patient count, or that leaves paid per patient almost unchanged, is not flagged. A provider that bills only the expected codes for hospice (and has a hospice taxonomy), home health, or personal care is not flagged for a narrow or flat pattern. A cost outlier is compared with other billers in the provider's state when that state has at least 30. Otherwise the comparison is national. An incorporation date, when the enrollment file has one, is used before the NPPES date. A missing date is not treated as a new organization. An owner matches the exclusion list on first name, last name, and state, and on middle name when both sides have one. A reinstated person is not flagged. The agency name is not matched. Care Compare live discharges and home-health readmissions are corroborating indicators. They are not a Critical tier by themselves. HCRIS cost reports, SAM.gov, and state Medicaid exclusion lists are not loaded. The download is still the full multi-gigabyte extract, so leave a large free disk and at least 16 GB of RAM. A smaller machine can load the LEIE and the owner files, or `bash install.sh --demo` for the fictional fixture.
 
 The `--user` command wires `.venv/bin/fraudledger` at this clone's `var/config.yaml`. The system command uses `/etc/fraudledger/config.yaml` and does not depend on the clone staying on disk.
 
@@ -96,8 +96,11 @@ Set these in `/etc/fraudledger/config.yaml` only when you want `refresh` to use 
 | OIG LEIE | https://oig.hhs.gov/exclusions/downloadables/UPDATED.csv |
 | Hospice owners and enrollments | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/hospice-all-owners |
 | Home health owners and enrollments | https://data.cms.gov/provider-characteristics/hospitals-and-other-facilities/home-health-agency-all-owners |
+| Medicare hospice and home health use | CMS data catalog, latest post-acute provider CSV |
+| Hospice Care Compare | CMS provider-data catalog, title "Hospice - Provider Data" |
+| Home health Care Compare | CMS provider-data catalog, title "Home Health Care Agencies" |
 
-v1 scores hospice, home health, and personal-care procedure codes in the Medicaid spending extract, plus an NPI match to the LEIE. The public working set does not keep the rest of the national extract. Owner linking uses the CMS associate id only. A shared address is an extra edge when at least three providers use the same street, city, and state. Name-only LEIE matches are not flags.
+v1 scores hospice, home health, and personal-care procedure codes in the Medicaid spending extract, plus an NPI match to the LEIE. The public working set does not keep the rest of the national extract. Owner linking uses the CMS associate id only. A shared address is an extra edge when 3 to 25 providers use the same street, city, and state. A post-office box is not linked. The cluster bonus is not added inside a group of more than 40 providers. Name-only LEIE matches are not flags. An agency name is not matched to the exclusion list.
 
 The national Medicaid extract is on the order of 227 million rows. Do not open it in pandas. The loader streams it through DuckDB and writes only the priority procedure codes. The raw download is still stored, so plan on tens of gigabytes of disk before starting the working set.
 
@@ -107,17 +110,25 @@ Thresholds live in the YAML config and the hash of that file is stored on the ru
 
 | Rule | Lead |
 | --- | --- |
-| R01 | Paid per line above 3× the national HCPCS median, at least $100k, peer group of 30 |
-| R02 | Above the 90th percentile rate on two or more codes |
+| R01 | Paid per line above 3× the state HCPCS median when that state has 30 billers, otherwise the national median; at least $100k |
+| R02 | Above the 90th percentile rate on two or more codes, using the same state-or-national peer group |
 | R03 | Lines divided by the busiest month's beneficiary count, over 100 |
 | R04 | Lines per working day at least 50 |
-| R05 | One or two codes and at least $1M paid |
-| R06 | Coefficient of variation of monthly paid under 0.10, six months, $250k |
-| R07 | Year-over-year growth over 2 and an absolute change of at least $1M |
-| R08 | Year-over-year growth over 5 and latest-year paid at least $250k |
-| R09 | First-year paid at least $1M and enumeration is not older than that year |
-| R10 | Enumerated on or after 2022-01-01 and lifetime paid at least $5M |
-| R11 | NPI is on the LEIE and paid amounts fall on or after the exclusion date |
+| R05 | One or two codes and at least $1M paid, unless the codes are one expected family |
+| R06 | Coefficient of variation of monthly paid under 0.10, six months, $250k, with the same family exemption |
+| R07 | Year-over-year growth over 2 and an absolute change of at least $1M, unless the patient count or the paid-per-patient rate explains it |
+| R08 | Year-over-year growth over 5 and latest-year paid at least $250k, with the same growth exceptions |
+| R09 | First-year paid at least $1M and a real incorporation or enumeration date says the organization is new |
+| R10 | Incorporation, or enumeration when incorporation is missing, on or after 2022-01-01 and lifetime paid at least $5M |
+| R11 | Billing NPI is on the LEIE and paid amounts fall on or after the exclusion date |
+| R12 | A payment jump with a qualifying owner associated in that year or the year before |
+| R13 | Owner matches the LEIE on first name, last name, and state. Middle name must agree when both sides have one. A reinstated person is not flagged |
+| R14 | Medicare hospice days per stay above 2× the provider median, CCN plus state when both files have a state |
+| R15 | Medicare home health visits per episode above 2× the provider median |
+| R16 | A servicing NPI other than the biller is on the LEIE, with payment on or after the exclusion date |
+| R17 | The same servicing NPI is paid through at least 3 billing NPIs that do not share an owner, and at least $250k |
+| R18 | Care Compare early or late live discharges above 2× the hospice median, at least 8 peers |
+| R19 | Care Compare potentially preventable readmissions above 2× the home-health median, at least 8 peers |
 
 Rules are not mutually exclusive. A large first year at an ordinary rate can also trip velocity. Beneficiary counts are not added across months.
 

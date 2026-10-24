@@ -135,6 +135,15 @@ CREATE TABLE IF NOT EXISTS medicare_use (
     rhc_days_pct DOUBLE,
     origin VARCHAR
 );
+
+CREATE TABLE IF NOT EXISTS care_compare (
+    ccn VARCHAR,
+    state VARCHAR,
+    setting VARCHAR,
+    measure VARCHAR,
+    score DOUBLE,
+    origin VARCHAR
+);
 """
 
 MIGRATIONS = (
@@ -146,6 +155,10 @@ MIGRATIONS = (
     "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_first VARCHAR",
     "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_last VARCHAR",
     "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_state VARCHAR",
+    "ALTER TABLE ownership_edges ADD COLUMN IF NOT EXISTS owner_middle VARCHAR",
+    "ALTER TABLE leie ADD COLUMN IF NOT EXISTS middle_name VARCHAR",
+    "ALTER TABLE leie ADD COLUMN IF NOT EXISTS reinstated_on DATE",
+    "ALTER TABLE medicare_use ADD COLUMN IF NOT EXISTS state VARCHAR",
 )
 
 

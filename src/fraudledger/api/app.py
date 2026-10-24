@@ -373,7 +373,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return templates.TemplateResponse(
                 request,
                 "rules.html",
-                shell(request, connection, run_row, catalog=catalog, config_sha=settings.config_sha256),
+                shell(
+                    request,
+                    connection,
+                    run_row,
+                    catalog=catalog,
+                    config_sha=settings.config_sha256,
+                    cluster_bonus_max=settings.cluster_bonus_max_providers,
+                ),
             )
 
         return call(read)

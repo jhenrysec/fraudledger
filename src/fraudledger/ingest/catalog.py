@@ -13,6 +13,7 @@ from fraudledger.ingest.common import download
 from fraudledger.settings import Settings
 
 CMS_CATALOG = "https://data.cms.gov/data.json"
+PROVIDER_CATALOG = "https://data.cms.gov/provider-data/api/1/metastore/schemas/dataset/items"
 NPPES_INDEX = "https://download.cms.gov/nppes/NPI_Files.html"
 MEDICAID_PAGE = "https://opendata.hhs.gov/datasets/medicaid-provider-spending/"
 LEIE_CSV = "https://oig.hhs.gov/exclusions/downloadables/UPDATED.csv"
@@ -79,6 +80,20 @@ KNOWN_SOURCES: tuple[KnownSource, ...] = (
         "https://data.cms.gov/provider-summary-by-type-of-service/medicare-post-acute-care-hospice",
         "The latest provider year. Much smaller than the Medicaid extract.",
     ),
+    KnownSource(
+        "hospice-care",
+        "Hospice Care Compare",
+        "Live-discharge percentages from the CMS hospice provider file. Used only as a corroborating indicator.",
+        "https://data.cms.gov/provider-data/topics/hospice-care",
+        "One CSV. Much smaller than the Medicaid extract.",
+    ),
+    KnownSource(
+        "home-health-care",
+        "Home health Care Compare",
+        "Potentially preventable readmissions from the CMS home health agency file.",
+        "https://data.cms.gov/provider-data/topics/home-health-services",
+        "One CSV. Much smaller than the Medicaid extract.",
+    ),
 )
 
 CUSTOM_KINDS: tuple[tuple[str, str], ...] = (
@@ -91,6 +106,8 @@ CUSTOM_KINDS: tuple[tuple[str, str], ...] = (
     ("home-health-enrollments", "Home health enrollment CSV"),
     ("medicare-hospice", "Medicare hospice provider CSV"),
     ("medicare-home-health", "Medicare home health provider CSV"),
+    ("hospice-care", "Hospice Care Compare CSV"),
+    ("home-health-care", "Home health Care Compare CSV"),
 )
 
 CONFIG_KEYS = {
@@ -103,6 +120,8 @@ CONFIG_KEYS = {
     "home-health-enrollments": "home_health_enrollments_url",
     "medicare-hospice": "medicare_hospice_url",
     "medicare-home-health": "medicare_home_health_url",
+    "hospice-care": "hospice_care_url",
+    "home-health-care": "home_health_care_url",
 }
 
 
@@ -213,6 +232,22 @@ def latest_pac_url(catalog: dict | list, setting: str) -> str:
     return best[2]
 
 
+def provider_csv_url(catalog: dict | list, title: str) -> str:
+    """CSV download for one exact title in the CMS provider-data catalog."""
+    items = catalog if isinstance(catalog, list) else []
+    for item in items:
+        if str(item.get("title") or "") != title:
+            continue
+        for dist in item.get("distribution") or []:
+            node = dist.get("data") if isinstance(dist, dict) and isinstance(dist.get("data"), dict) else dist
+            if not isinstance(node, dict):
+                continue
+            url = str(node.get("downloadURL") or "")
+            if url.lower().split("?", 1)[0].endswith(".csv"):
+                return url
+    raise SystemExit(f"No CSV in the CMS provider catalog for {title}. Paste the file URL.")
+
+
 def _fetch_text(url: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "fraudledger/1.0 (public-data research)"})
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -235,6 +270,21 @@ def load_cms_catalog(settings: Settings) -> dict:
     return json.loads(text)
 
 
+def load_provider_catalog(settings: Settings) -> list:
+    settings.ensure_dirs()
+    cache = settings.data_dir / "tmp" / "provider-data.json"
+    if cache.is_file() and time.time() - cache.stat().st_mtime < CATALOG_MAX_AGE:
+        return json.loads(cache.read_text(encoding="utf-8"))
+    dest = settings.data_dir / "tmp" / "provider-data.json.download"
+    download(PROVIDER_CATALOG, dest)
+    text = dest.read_text(encoding="utf-8-sig")
+    cache.write_text(text, encoding="utf-8")
+    parsed = json.loads(text)
+    if not isinstance(parsed, list):
+        raise SystemExit("The CMS provider catalog did not return a dataset list.")
+    return parsed
+
+
 def resolve_file_url(settings: Settings, key: str, override: str | None = None) -> str:
     if override:
         return validate_http_url(override)
@@ -247,6 +297,10 @@ def resolve_file_url(settings: Settings, key: str, override: str | None = None) 
         return medicaid_url_from_html(_fetch_text(MEDICAID_PAGE))
     if key == "nppes":
         return nppes_monthly_url_from_html(_fetch_text(NPPES_INDEX))
+    if key == "hospice-care":
+        return provider_csv_url(load_provider_catalog(settings), "Hospice - Provider Data")
+    if key == "home-health-care":
+        return provider_csv_url(load_provider_catalog(settings), "Home Health Care Agencies")
     catalog = load_cms_catalog(settings)
     prefixes = {
         "hospice-owners": "Hospice All Owners",

@@ -47,7 +47,7 @@ def write_scores(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         clusters.setdefault(cluster_id, []).append(key)
     flagged = set(by_provider)
     for members in clusters.values():
-        if len(members) < 2:
+        if len(members) < 2 or len(members) > settings.cluster_bonus_max_providers:
             continue
         flagged_members = [key for key in members if key in flagged]
         if len(flagged_members) < 2:

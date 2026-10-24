@@ -1012,5 +1012,75 @@ class AccuracyTests(unittest.TestCase):
         self.assertNotIn("R14", mismatch)
 
 
+class DownloadTests(unittest.TestCase):
+    def test_forbidden_is_retried_with_another_client_type(self) -> None:
+        import email
+        import urllib.error
+        from unittest.mock import patch
+
+        from fraudledger.ingest.common import download
+
+        calls: list[str] = []
+
+        class Body:
+            def __init__(self) -> None:
+                self.headers = {"Content-Length": "4"}
+                self._sent = False
+
+            def read(self, _size: int = -1) -> bytes:
+                if self._sent:
+                    return b""
+                self._sent = True
+                return b"ok\n"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> bool:
+                return False
+
+        def fake_urlopen(request, timeout=60):
+            agent = request.get_header("User-agent") or ""
+            calls.append(agent)
+            if "Chrome" not in agent:
+                raise urllib.error.HTTPError(
+                    request.full_url, 403, "Forbidden", email.message.Message(), None
+                )
+            return Body()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "file.download"
+            with patch("fraudledger.ingest.common.time.sleep"), patch(
+                "fraudledger.ingest.common.urllib.request.urlopen", fake_urlopen
+            ):
+                download("https://example.test/file.csv", dest, label="Example")
+            self.assertEqual(dest.read_bytes(), b"ok\n")
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertIn("Chrome", calls[-1])
+
+    def test_repeated_forbidden_names_the_url(self) -> None:
+        import email
+        import urllib.error
+        from unittest.mock import patch
+
+        from fraudledger.ingest.common import download
+
+        def fake_urlopen(request, timeout=60):
+            raise urllib.error.HTTPError(
+                request.full_url, 403, "Forbidden", email.message.Message(), None
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "file.download"
+            with patch("fraudledger.ingest.common.time.sleep"), patch(
+                "fraudledger.ingest.common.urllib.request.urlopen", fake_urlopen
+            ):
+                with self.assertRaises(SystemExit) as caught:
+                    download("https://example.test/blocked.csv", dest, label="Blocked")
+        self.assertIn("HTTP 403", str(caught.exception))
+        self.assertIn("https://example.test/blocked.csv", str(caught.exception))
+        self.assertFalse(dest.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,10 +6,9 @@ import json
 import re
 import time
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 
-from fraudledger.ingest.common import download
+from fraudledger.ingest.common import download, open_remote
 from fraudledger.settings import Settings
 
 CMS_CATALOG = "https://data.cms.gov/data.json"
@@ -249,8 +248,7 @@ def provider_csv_url(catalog: dict | list, title: str) -> str:
 
 
 def _fetch_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "fraudledger/1.0 (public-data research)"})
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with open_remote(url, timeout=60) as response:
         return response.read().decode("utf-8", "replace")
 
 

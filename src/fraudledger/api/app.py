@@ -647,7 +647,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         def job() -> None:
             from fraudledger.ingest.common import download, set_progress_reporter
-            from fraudledger.ingest.pull import LABELS, load_local, plan, plan_working
+            from fraudledger.ingest.pull import LABELS, OPTIONAL_KEYS, load_local, plan, plan_working
 
             connection = None
             set_progress_reporter(reporter)
@@ -665,28 +665,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 messages: list[str] = []
                 for key, source_url, options in steps:
                     if key == "skip":
-                        messages.append(f"NPPES skipped: {source_url}")
+                        messages.append(source_url)
                         continue
                     label = LABELS.get(key, key)
                     dest = settings.data_dir / "tmp" / f"{key}.download"
-                    download(source_url, dest, label=label)
-                    with _LOCK:
-                        connection = db()
-                        try:
-                            messages.append(
-                                load_local(
-                                    connection,
-                                    settings,
-                                    key,
-                                    dest,
-                                    source_url,
-                                    drop_demo=bool(options.get("drop_demo")),
-                                    focus=options.get("focus"),
+                    try:
+                        download(source_url, dest, label=label)
+                        with _LOCK:
+                            connection = db()
+                            try:
+                                messages.append(
+                                    load_local(
+                                        connection,
+                                        settings,
+                                        key,
+                                        dest,
+                                        source_url,
+                                        drop_demo=bool(options.get("drop_demo")),
+                                        focus=options.get("focus"),
+                                    )
                                 )
-                            )
-                        finally:
-                            connection.close()
-                            connection = None
+                            finally:
+                                connection.close()
+                                connection = None
+                    except SystemExit as exc:
+                        if key not in OPTIONAL_KEYS:
+                            raise
+                        messages.append(f"{label} skipped: {exc}")
                 text = " ".join(messages)
                 if score:
                     with _LOCK:

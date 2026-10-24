@@ -22,6 +22,14 @@ PAIRS = {
     "home-health": ("home-health-enrollments", "home-health-owners"),
 }
 
+OPTIONAL_KEYS = {
+    "nppes",
+    "medicare-hospice",
+    "medicare-home-health",
+    "hospice-care",
+    "home-health-care",
+}
+
 LABELS = {
     "medicaid": "Medicaid Provider Spending",
     "leie": "OIG exclusion list",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -30,6 +31,53 @@ def set_progress_label(label: str) -> None:
 def report_progress(message: str, received: int | None = None, total: int | None = None) -> None:
     if _reporter is not None:
         _reporter(message, received, total)
+
+
+_HEADER_PROFILES = (
+    {
+        "User-Agent": "fraudledger/1.0 (public-data research)",
+        "Accept": "*/*",
+    },
+    {
+        "User-Agent": "curl/8.5.0",
+        "Accept": "*/*",
+    },
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    },
+)
+
+
+def open_remote(url: str, extra: dict | None = None, timeout: int = 120, method: str | None = None):
+    """Open a public file. CMS sometimes answers 403 to one client type and 200 to another."""
+    last: urllib.error.HTTPError | None = None
+    for index, profile in enumerate(_HEADER_PROFILES):
+        headers = dict(profile)
+        if extra:
+            headers.update(extra)
+        if index == len(_HEADER_PROFILES) - 1:
+            origin = urllib.parse.urlparse(url)
+            if origin.scheme and origin.netloc:
+                headers.setdefault("Referer", f"{origin.scheme}://{origin.netloc}/")
+        request = urllib.request.Request(url, headers=headers, method=method)
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            last = exc
+            try:
+                exc.close()
+            except OSError:
+                pass
+            if exc.code not in {403, 429, 503} or index + 1 == len(_HEADER_PROFILES):
+                break
+            time.sleep(0.8)
+    code = last.code if last is not None else "error"
+    raise SystemExit(f"The download failed (HTTP {code}): {url}") from last
 
 
 def percent_of(received: int | None, total: int | None) -> int | None:
@@ -76,32 +124,20 @@ def file_kind(path: Path) -> str:
 
 
 def remote_size(url: str) -> int | None:
-    request = urllib.request.Request(
-        url,
-        method="HEAD",
-        headers={"User-Agent": "fraudledger/1.0 (public-data research)"},
-    )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with open_remote(url, timeout=60, method="HEAD") as response:
             value = response.headers.get("Content-Length")
             if value and value.isdigit() and int(value) > 0:
                 return int(value)
-    except (OSError, ValueError):
+    except (OSError, SystemExit, ValueError):
         pass
-    ranged = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "fraudledger/1.0 (public-data research)",
-            "Range": "bytes=0-0",
-        },
-    )
     try:
-        with urllib.request.urlopen(ranged, timeout=60) as response:
+        with open_remote(url, extra={"Range": "bytes=0-0"}, timeout=60) as response:
             header = response.headers.get("Content-Range") or ""
             total = header.rsplit("/", 1)[-1]
             if total.isdigit() and int(total) > 0:
                 return int(total)
-    except (OSError, ValueError):
+    except (OSError, SystemExit, ValueError):
         return None
     return None
 
@@ -115,11 +151,7 @@ def download(url: str, dest: Path, label: str | None = None) -> str:
         if expected and have == expected:
             report_progress(f"Using the completed download of {name}", have, expected)
             return sha256_file(dest)
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "fraudledger/1.0 (public-data research)"},
-    )
-    with urllib.request.urlopen(request, timeout=120) as response, dest.open("wb") as handle:
+    with open_remote(url, timeout=120) as response, dest.open("wb") as handle:
         total_header = response.headers.get("Content-Length")
         total = int(total_header) if total_header and total_header.isdigit() else None
         received = 0

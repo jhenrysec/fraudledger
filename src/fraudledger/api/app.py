@@ -17,7 +17,8 @@ from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.graph.links import shared_links, summarize
 from fraudledger.reference import explain_cluster, reader_index
-from fraudledger.report.assemble import DISCLAIMER, _svg
+from fraudledger.report.assemble import DISCLAIMER
+from fraudledger.report.chart import chart_for
 from fraudledger.reviews import ALLOWED_STATES, PROVIDER_KEY, set_review
 from fraudledger.settings import Settings, load_settings
 
@@ -204,7 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchall()
             monthly = connection.execute(
                 """
-                SELECT month, SUM(paid)
+                SELECT month, SUM(paid), string_agg(DISTINCT upper(trim(hcpcs)), ',')
                 FROM facts_medicaid
                 WHERE billing_npi = ?
                 GROUP BY 1
@@ -212,6 +213,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [provider_key],
             ).fetchall()
+            chart = chart_for(
+                connection,
+                settings,
+                provider_key,
+                identity[5] if identity else None,
+                monthly,
+            )
             edges = connection.execute(
                 """
                 SELECT owner_key, owner_name, percentage, role_code, edge_weight, origin
@@ -244,7 +252,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     identity=identity,
                     score=score,
                     flags=flags,
-                    spark=_svg([(str(month), float(paid or 0)) for month, paid in monthly]),
+                    spark=chart["svg"],
+                    chart_note=chart["note"],
                     edges=edges,
                     clusters=[row[0] for row in clusters],
                     review=review,

@@ -13,7 +13,10 @@
     {% else %}
     <p>No score in this run. The provider can still appear here from an ownership cluster.</p>
     {% endif %}
-    {{ spark|safe }}
+    <figure class="chart">
+      {{ spark|safe }}
+      <figcaption>{{ chart_note }}</figcaption>
+    </figure>
     <ul>
       {% for rule_id, metric, threshold, peer, dollars, detail in flags %}
       <li>

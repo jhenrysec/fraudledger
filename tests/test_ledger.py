@@ -1012,6 +1012,106 @@ class AccuracyTests(unittest.TestCase):
         self.assertNotIn("R14", mismatch)
 
 
+class ChartTests(unittest.TestCase):
+    def _chart(self, rows: list[str], states: list[tuple[str, str]]):
+        path_rows = [
+            "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES",
+            *rows,
+        ]
+        settings = load_settings(data_dir=self.tmp.name)
+        settings.ensure_dirs()
+        path = Path(self.tmp.name) / "paid.csv"
+        path.write_text("\n".join(path_rows) + "\n", encoding="utf-8")
+        self.con = connect(settings.db_path)
+        ingest_medicaid(self.con, settings, path=str(path), focus="priority")
+        self.con.executemany(
+            """
+            INSERT INTO providers (provider_key, npi, name, state, origin)
+            VALUES (?, ?, 'Example', ?, 'public')
+            """,
+            [(npi, npi, state) for npi, state in states],
+        )
+        return settings
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.con = None
+
+    def tearDown(self) -> None:
+        if self.con is not None:
+            self.con.close()
+        self.tmp.cleanup()
+
+    def test_state_median_sits_under_a_high_month(self) -> None:
+        import re
+
+        from fraudledger.report.chart import chart_for
+
+        rows = []
+        states = [("1390000001", "TX")]
+        for month in ("2024-01", "2024-02", "2024-03", "2024-04", "2024-05", "2024-06"):
+            rows.append(f"1390000001,G0156,{month},200000,10")
+            for index in range(30):
+                npi = f"139000{index + 2:04d}"
+                rows.append(f"{npi},G0156,{month},10000,10")
+                if month == "2024-01":
+                    states.append((npi, "TX"))
+        settings = self._chart(rows, states)
+        monthly = self.con.execute(
+            """
+            SELECT month, SUM(paid), string_agg(DISTINCT upper(trim(hcpcs)), ',')
+            FROM facts_medicaid
+            WHERE billing_npi = '1390000001'
+            GROUP BY 1
+            ORDER BY 1
+            """
+        ).fetchall()
+        chart = chart_for(self.con, settings, "1390000001", "TX", monthly)
+        self.assertIn("Medicaid paid by month", chart["svg"])
+        self.assertIn("This provider", chart["svg"])
+        self.assertIn("TX median", chart["svg"])
+        self.assertIn("$0", chart["svg"])
+        self.assertIn("home health", chart["note"])
+        self.assertIn("$200k", chart["note"])
+        self.assertIn("$10k", chart["note"])
+        lines = re.findall(r'points="([^"]+)"', chart["svg"])
+        self.assertGreaterEqual(len(lines), 2)
+
+        def last_y(points: str) -> float:
+            return float(points.split()[-1].split(",")[1])
+
+        self.assertLess(last_y(lines[-1]), last_y(lines[-2]))
+
+    def test_small_state_uses_the_national_median(self) -> None:
+        from fraudledger.report.chart import chart_for
+
+        rows = []
+        states = [("1390000001", "TX")]
+        for index in range(5):
+            npi = f"139000{index + 2:04d}"
+            states.append((npi, "TX"))
+        for index in range(30):
+            npi = f"139100{index:04d}"
+            states.append((npi, "CA"))
+        for month in ("2024-01", "2024-02", "2024-03"):
+            rows.append(f"1390000001,G0156,{month},200000,10")
+            for npi, state in states[1:]:
+                paid = 50000 if state == "TX" else 8000
+                rows.append(f"{npi},G0156,{month},{paid},10")
+        settings = self._chart(rows, states)
+        monthly = self.con.execute(
+            """
+            SELECT month, SUM(paid), string_agg(DISTINCT upper(trim(hcpcs)), ',')
+            FROM facts_medicaid WHERE billing_npi = '1390000001'
+            GROUP BY 1 ORDER BY 1
+            """
+        ).fetchall()
+        chart = chart_for(self.con, settings, "1390000001", "TX", monthly)
+        self.assertIn("National median", chart["svg"])
+        self.assertNotIn("TX median", chart["svg"])
+        self.assertIn("national", chart["note"].lower())
+
+
 class DownloadTests(unittest.TestCase):
     def test_forbidden_is_retried_with_another_client_type(self) -> None:
         import email

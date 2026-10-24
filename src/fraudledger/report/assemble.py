@@ -11,6 +11,7 @@ from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.hashing import sha256_file, sha256_text
 from fraudledger.graph.links import shared_links
 from fraudledger.reference import explain_cluster
+from fraudledger.report.chart import chart_for
 from fraudledger.settings import Settings
 
 BANNED = ("fraudster", "guilty", "stole", "confirmed fraud", "fraud amount")
@@ -25,26 +26,6 @@ DISCLAIMER = (
 
 def _esc(value: object) -> str:
     return escape("" if value is None else str(value))
-
-
-def _svg(points: list[tuple[str, float]]) -> str:
-    if not points:
-        return ""
-    width, height, pad = 520, 140, 16
-    values = [value for _, value in points]
-    low, high = min(values), max(values)
-    span = high - low or 1
-    coords = []
-    for index, value in enumerate(values):
-        x = pad + (width - 2 * pad) * (index / max(len(values) - 1, 1))
-        y = height - pad - (height - 2 * pad) * ((value - low) / span)
-        coords.append(f"{x:.1f},{y:.1f}")
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
-        f'role="img" aria-label="Monthly paid amounts">'
-        f'<polyline fill="none" stroke="#0f766e" stroke-width="2" points="{" ".join(coords)}"/>'
-        f"</svg>"
-    )
 
 
 def _finding_block(name: str, key: str, score: float, tier: str, rules: str, excess: float, flags: list) -> str:
@@ -128,7 +109,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         ).fetchall()
         monthly = con.execute(
             """
-            SELECT month, SUM(paid) AS paid
+            SELECT month, SUM(paid) AS paid, string_agg(DISTINCT upper(trim(hcpcs)), ',')
             FROM facts_medicaid
             WHERE billing_npi = ?
             GROUP BY 1
@@ -136,6 +117,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
             """,
             [key],
         ).fetchall()
+        chart = chart_for(con, settings, key, state, monthly)
         evidence_path = evidence / f"{key}.csv"
         with evidence_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
@@ -173,7 +155,8 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
                 <p class="meta">{_esc(key)} · {_esc(place)} · score {float(score or 0):.1f}</p>
               </header>
               <p>Rules: {_esc(rules or "")}. Peer-gap estimate ${float(excess or 0):,.0f}.</p>
-              {_svg([(str(month), float(paid or 0)) for month, paid in monthly])}
+              {chart["svg"]}
+              <p class="meta">{_esc(chart["note"])}</p>
               <ul>{rows_html}</ul>
             </article>
             """
@@ -265,6 +248,7 @@ def _html(run_id: str, demo: bool, findings: list[str], disclaimer: str, config_
     .disclaimer, .banner {{ background: #fff; border-left: 4px solid #0f766e; padding: 12px 16px; }}
     .banner {{ border-left-color: #a16207; }}
     .finding {{ background: #fff; margin: 16px 0; padding: 16px 18px; }}
+    svg {{ width: 100%; height: auto; }}
     .badge {{ font: 12px/1 ui-sans-serif, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
     .tier-critical .badge {{ color: #9f1239; }}
     .tier-high .badge {{ color: #c2410c; }}

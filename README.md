@@ -73,7 +73,7 @@ fraudledger report 1234567890 --run 20261021T120000Z
 
 The Medicaid extract is a Parquet file of about 3 GB. The loader recognizes it by its file header, including when the saved name does not end in `.parquet`. A completed download is reused when its size still matches the server, so a failed read does not make you download it again.
 
-`fraudledger report` writes `exports/<run>-<provider>.zip` with `narrative.txt`, `evidence.csv`, `indicators.csv`, `how-to-submit.txt`, and `report.pdf`. You attach the PDF yourself at [america.gov/fraud](https://america.gov/fraud). The command does not contact the government. Do not type the peer-gap figure into the form as money taken.
+`fraudledger report` writes `exports/<run>-<provider>.zip` with `narrative.txt`, `evidence.csv`, `indicators.csv`, `how-to-submit.txt`, and `report.pdf`. The PDF opens with the bottom line, then the dollar figures (paid in the extract, and dollars above a typical peer), then the monthly chart with the peer median, then a plain-language explanation of each indicator. You attach the PDF yourself at [america.gov/fraud](https://america.gov/fraud). The command does not contact the government. Do not type the peer-gap figure into the form as money taken.
 
 `fraudledger sources` lists the known public files. `pull` looks up the current download for that file. `pull --url` uses an address you paste, and `--as` says how to read it (`medicaid`, `leie`, `nppes`, `hospice-owners`, `hospice-enrollments`, `home-health-owners`, `home-health-enrollments`). `--focus priority` keeps hospice, home health, and personal-care procedure codes from a Medicaid file. The same choices are on the Sources page at `http://127.0.0.1:8088/sources`.
 

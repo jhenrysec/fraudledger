@@ -533,17 +533,56 @@ class PublicReportTests(unittest.TestCase):
                 names = set(archive.namelist())
                 narrative = archive.read("narrative.txt").decode("utf-8")
                 submit = archive.read("how-to-submit.txt").decode("utf-8")
+                pdf = archive.read("report.pdf")
             self.assertEqual(
                 names,
                 {"narrative.txt", "evidence.csv", "indicators.csv", "how-to-submit.txt", "report.pdf"},
             )
             self.assertIn("1234567893", narrative)
             self.assertIn("https://america.gov/fraud", narrative)
+            self.assertIn("Bottom line up front", narrative)
+            self.assertIn("What the data indicates", narrative)
+            self.assertIn("Dollar figures", narrative)
+            self.assertIn("Dollars above a typical peer", narrative)
+            self.assertTrue(pdf.startswith(b"%PDF"))
+            self.assertGreater(len(pdf), 2000)
             self.assertIn("does not contact", submit.lower())
             blob = (narrative + submit).lower()
             for phrase in BANNED:
                 self.assertNotIn(phrase, blob)
             con.close()
+
+    def test_national_rate_sentence_does_not_append_the_state(self) -> None:
+        from fraudledger.report.packet import _explain_flag, _weight_sentence
+
+        text = _explain_flag(
+            "R01",
+            180.1,
+            75.06,
+            25.02,
+            202844.64,
+            '{"hcpcs":"G0156","rate":180.1,"median":25.02,"lines":1308,"paid":235565,'
+            '"peer_scope":"national","state":"NY"}',
+        )
+        self.assertIn("The national median", text)
+        self.assertNotIn("national NY", text)
+        self.assertNotIn("NY", text)
+        self.assertIn("not money taken", text)
+        jump = _explain_flag(
+            "R07",
+            3.0,
+            2.0,
+            1000,
+            3000,
+            '{"year":2024,"prior_year":2023,"paid":4000,"prior_paid":1000,"growth":3,'
+            '"absolute_change":3000,"patients":20,"prior_patients":10,"patient_growth":1}',
+        )
+        self.assertIn("2024 was 4.0 times 2023", jump)
+        self.assertIn("average monthly patient count", jump)
+        weights = _weight_sentence(load_settings(data_dir=self.id()), ["R01", "R02", "R03"], 9.0)
+        self.assertIn("R01 is 3", weights)
+        self.assertIn("sum to 9.0", weights)
+        self.assertNotIn("fraud amount", (text + jump + weights).lower())
 
     def test_purge_keeps_a_public_row(self) -> None:
         from fraudledger.ingest.demo import purge_demo
@@ -1110,6 +1149,7 @@ class ChartTests(unittest.TestCase):
         self.assertIn("National median", chart["svg"])
         self.assertNotIn("TX median", chart["svg"])
         self.assertIn("national", chart["note"].lower())
+        self.assertNotIn("otherwise", chart["note"].lower())
 
 
 class DownloadTests(unittest.TestCase):

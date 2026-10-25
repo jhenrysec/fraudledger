@@ -226,6 +226,9 @@ def chart_for(
         return {
             "svg": "",
             "note": "No monthly paid amounts for this provider in the extract.",
+            "points": [],
+            "benchmark": [],
+            "peer_label": "Peer median",
         }
     family = family_for(codes)
     state_key = (state or "").upper().strip()
@@ -261,8 +264,10 @@ def chart_for(
         where = []
         if "state" in used and state_key:
             where.append(f"{state_key} when that month has at least {minimum} {family_label}")
-        if "national" in used:
-            where.append(f"the national median of {family_label} otherwise")
+        if "national" in used and "state" in used:
+            where.append(f"the national median of {family_label} when the state does not")
+        elif "national" in used:
+            where.append(f"the national median of {family_label}")
         if "state" in used and "national" not in used:
             peer_label = f"{state_key} median"
         elif "national" in used and "state" not in used:
@@ -275,11 +280,13 @@ def chart_for(
         latest = f" Latest month {points[-1][0]}: this provider {_money(last_paid)}"
         if last_peer is not None:
             latest += f", peer median {_money(last_peer)}."
+            if last_paid > last_peer * 6:
+                latest += " On this scale the peer median sits close to $0."
         else:
             latest += "."
         note = (
             "Medicaid dollars paid each month. The scale starts at $0. "
-            f"The dashed line is the median paid that month by other {family_label}. "
+            f"The dashed line is the median paid that month among {family_label}. "
             f"The peer group is {joined}. "
             "The median is a typical peer, not a loss amount."
             + latest
@@ -287,6 +294,9 @@ def chart_for(
     return {
         "svg": render_paid_chart(points, benchmark, peer_label),
         "note": note,
+        "points": points,
+        "benchmark": benchmark,
+        "peer_label": peer_label,
     }
 
 
@@ -359,6 +369,16 @@ def render_paid_chart(
         )
     provider = polyline([value for _, value in points], "#0d9488", "")
     peer = polyline(benchmark[: len(points)], "#64748b", "6 4")
+    peer_tag = ""
+    tagged = [index for index, value in enumerate(benchmark[: len(points)]) if value is not None]
+    if tagged:
+        last = tagged[-1]
+        x, y = xy(last, benchmark[last])
+        y_text = y - 8 if y > top + 18 else y + 14
+        peer_tag = (
+            f'<text x="{x + 6:.1f}" y="{y_text:.1f}" font-size="11" fill="#64748b">'
+            f'{escape(_money(benchmark[last]))}</text>'
+        )
     title = "Medicaid paid by month"
     legend_x = left + 220
     legend = (
@@ -372,6 +392,105 @@ def render_paid_chart(
         f'role="img" aria-label="{escape(title)}. Solid line is this provider. Dashed line is the {escape(peer_label)}.">'
         f'<text x="{left}" y="20" font-size="13" font-weight="650" fill="#142033">{escape(title)}</text>'
         f"{legend}"
-        f'{"".join(grid)}{"".join(labels)}{"".join(xlabels)}{peer}{provider}'
+        f'{"".join(grid)}{"".join(labels)}{"".join(xlabels)}{peer}{provider}{peer_tag}'
         f"</svg>"
     )
+
+
+def paid_drawing(points: list[tuple[str, float]], benchmark: list[float | None] | None, peer_label: str):
+    """The same chart as a PDF drawing. ReportLab cannot paint the SVG."""
+    from reportlab.graphics.shapes import Circle, Drawing, Line, PolyLine, String
+    from reportlab.lib.colors import HexColor
+
+    width, height = 500, 214
+    drawing = Drawing(width, height)
+    if not points:
+        return drawing
+    benchmark = list(benchmark or [])
+    if len(benchmark) < len(points):
+        benchmark.extend([None] * (len(points) - len(benchmark)))
+    left, right, top, bottom = 48, 10, 26, 26
+    values = [value for _, value in points]
+    values.extend(value for value in benchmark if value is not None)
+    high = _ceiling(max(values) if values else 1)
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    def xy(index: int, value: float) -> tuple[float, float]:
+        x = left + plot_w * (index / max(len(points) - 1, 1))
+        y = bottom + plot_h * (value / high)
+        return x, y
+
+    def series(values_row: list[float | None], color: str, dash: tuple[int, int] | None) -> None:
+        current: list[float] = []
+
+        def flush() -> None:
+            if len(current) >= 4:
+                drawing.add(
+                    PolyLine(
+                        current,
+                        strokeColor=HexColor(color),
+                        strokeWidth=1.8,
+                        strokeLineCap=1,
+                        strokeDashArray=dash,
+                    )
+                )
+            elif len(current) == 2:
+                drawing.add(
+                    Circle(
+                        current[0],
+                        current[1],
+                        2.6,
+                        fillColor=HexColor(color),
+                        strokeColor=HexColor(color),
+                        strokeWidth=0.4,
+                    )
+                )
+
+        for index, value in enumerate(values_row):
+            if value is None:
+                flush()
+                current = []
+                continue
+            x, y = xy(index, value)
+            current.extend((x, y))
+        flush()
+
+    ink = HexColor("#142033")
+    muted = HexColor("#5c6b7a")
+    for tick in (0.0, high / 2, high):
+        _, y = xy(0, tick)
+        drawing.add(Line(left, y, width - right, y, strokeColor=HexColor("#e2e8f0"), strokeWidth=0.6))
+        drawing.add(String(left - 6, y - 3, _money(tick), fontName="Helvetica", fontSize=8, fillColor=muted, textAnchor="end"))
+    label_at = {0, len(points) - 1}
+    if len(points) >= 5:
+        label_at.add(len(points) // 2)
+    for index in sorted(label_at):
+        x, _ = xy(index, 0)
+        anchor = "start" if index == 0 else "end" if index == len(points) - 1 else "middle"
+        drawing.add(String(x, 6, points[index][0], fontName="Helvetica", fontSize=8, fillColor=muted, textAnchor=anchor))
+    series(benchmark[: len(points)], "#64748b", (4, 3))
+    series([value for _, value in points], "#0d9488", None)
+    tagged = [index for index, value in enumerate(benchmark[: len(points)]) if value is not None]
+    if tagged:
+        last = tagged[-1]
+        x, y = xy(last, float(benchmark[last]))
+        text_y = y + 8 if y < bottom + 16 else y + 4
+        drawing.add(
+            String(
+                min(x + 4, width - 36),
+                text_y,
+                _money(float(benchmark[last])),
+                fontName="Helvetica",
+                fontSize=8,
+                fillColor=HexColor("#64748b"),
+            )
+        )
+    drawing.add(String(left, height - 14, "Medicaid paid by month", fontName="Helvetica-Bold", fontSize=9, fillColor=ink))
+    drawing.add(Line(250, height - 12, 272, height - 12, strokeColor=HexColor("#0d9488"), strokeWidth=1.8))
+    drawing.add(String(276, height - 15, "This provider", fontName="Helvetica", fontSize=8, fillColor=ink))
+    drawing.add(
+        Line(350, height - 12, 372, height - 12, strokeColor=HexColor("#64748b"), strokeWidth=1.8, strokeDashArray=(4, 3))
+    )
+    drawing.add(String(376, height - 15, peer_label, fontName="Helvetica", fontSize=8, fillColor=ink))
+    return drawing

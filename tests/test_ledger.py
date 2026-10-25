@@ -326,7 +326,8 @@ class ApiTests(unittest.TestCase):
             self.assertIn("The score adds a weight", provider.text)
             self.assertIn("$1,000", provider.text)
             self.assertNotIn("$2,000", provider.text)
-            self.assertIn("counted once", provider.text)
+            self.assertIn("direct owner (CMS role 34)", provider.text)
+            self.assertIn("a public file", provider.text)
             self.assertNotIn("peer_scope", provider.text)
             self.assertNotIn("metric ", provider.text.lower())
             missing = client.get("/provider/not a key")
@@ -423,7 +424,8 @@ class ReaderIndexTests(unittest.TestCase):
             page = client.get("/index")
             self.assertEqual(page.status_code, 200)
             self.assertIn("5% or greater direct ownership interest", page.text)
-            self.assertIn("Do not add it to role 34", page.text)
+            self.assertIn("direct owner (CMS role 34)", page.text)
+            self.assertIn("Do not add it to the direct-owner percent", page.text)
             self.assertIn("How to read", page.text)
             self.assertIn("role strength", page.text)
             self.assertIn("post-office box", page.text)
@@ -432,7 +434,7 @@ class ReaderIndexTests(unittest.TestCase):
             self.assertEqual(rules.status_code, 200)
             self.assertIn("at most 40", rules.text)
             notes = reading_notes(settings)
-            self.assertIn("Add role 34 once per owner", notes)
+            self.assertIn("Direct owner (CMS role 34)", notes)
             self.assertIn("at least 8", notes)
             lowered = (page.text + rules.text + notes).lower()
             for phrase in BANNED:
@@ -622,7 +624,7 @@ class PublicReportTests(unittest.TestCase):
         )
         self.assertEqual(
             lines,
-            ["EXTENDED CHHA ACQUISITION, LLC (PECOS associate id 7911382882): role 34 at 100%."],
+            ["EXTENDED CHHA ACQUISITION, LLC (PECOS associate id 7911382882): direct owner (CMS role 34) at 100%."],
         )
         from fraudledger.report.packet import _explain_flag, _weight_sentence
 

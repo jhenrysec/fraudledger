@@ -34,7 +34,7 @@
       <p>{{ identity[3] or "" }}<br>{{ identity[4] or "" }}{% if identity[5] %}, {{ identity[5] }}{% endif %} {{ identity[6] or "" }}</p>
       <p>Enumeration date {{ identity[7] or "unknown" }}. This is the NPPES date.</p>
       <p>{% if identity[8] %}Incorporation date {{ identity[8] }}. That date is not a Medicare enrollment date.{% else %}No incorporation date was loaded. When it is missing, an organization-date indicator uses the enumeration date instead.{% endif %}</p>
-      <p>Source {{ identity[9] or "unknown" }}</p>
+      <p>Source file: {{ identity[9]|origin_label }}</p>
       {% else %}
       <p>No directory row. The NPI is known only from billing facts.</p>
       {% endif %}
@@ -72,18 +72,18 @@
 </div>
 <section class="card">
   <h2>Ownership edges</h2>
-  <p class="sub">One row is one role for one owner, not one share of the company. The owner id is the PECOS associate id, column ASSOCIATE ID – OWNER. It is not an NPI. <a href="/index#ownership">How to read the percent and the weight</a>.</p>
+  <p class="sub">One row is one relationship CMS recorded for one owner. It is not one share of the company. Direct owner (CMS role 34) is equity in this provider. Indirect owner (CMS role 35) is equity in a company that owns this provider. Officer (CMS role 40), director (CMS role 41), and managing employee are control relationships. The percent on a control row is often the same stake listed again, so do not add the percent column. The owner id is the PECOS associate id, column ASSOCIATE ID – OWNER. It is not an NPI. Weight only groups providers. It is not a share. <a href="/index#roles">Every CMS role code</a>.</p>
   <table>
-    <thead><tr><th>PECOS associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th><th class="num">Weight</th><th>Origin</th></tr></thead>
+    <thead><tr><th>PECOS associate id</th><th>Name</th><th>Relationship CMS recorded</th><th class="num">Percent</th><th class="num">Weight</th><th>Source file</th></tr></thead>
     <tbody>
       {% for owner, name, percent, role, weight, origin in edges %}
       <tr>
         <td class="mono">{{ owner }}</td>
         <td>{{ name or "—" }}</td>
-        <td class="mono">{{ role or "—" }}</td>
+        <td>{{ role|role_label }}</td>
         <td class="num">{{ percent if percent is not none else "—" }}</td>
         <td class="num">{{ "%.2f"|format(weight or 0) }}</td>
-        <td>{{ origin }}</td>
+        <td>{{ origin|origin_label }}</td>
       </tr>
       {% else %}
       <tr><td colspan="6">No ownership edge uses this provider key.</td></tr>

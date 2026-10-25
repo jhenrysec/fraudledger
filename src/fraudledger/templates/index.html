@@ -85,7 +85,7 @@
     <tbody>
       <tr><td>PECOS associate id</td><td>Column <span class="mono">ASSOCIATE ID – OWNER</span> in the CMS owner file. Not an NPI. People and companies both have one. The same id is one owner even when the name is repeated, and the same id on a second provider is what links the group.</td></tr>
       <tr><td>Name</td><td>The organization name, or the person’s first and last name, from that same row.</td></tr>
-      <tr><td>Role</td><td>The CMS role code for this row only. The codes are in the next section.</td></tr>
+      <tr><td>Relationship</td><td>What CMS recorded for this person or company on this provider. Direct owner (CMS role 34) is equity in this provider. Indirect owner (CMS role 35) is equity in a company that owns this provider. Officer (40), director (41), and managing employee are control relationships, not a second share. The number is the CMS role code. The full list is below.</td></tr>
       <tr><td>Percent</td><td>The percent CMS stored on that role row. It is often copied onto the officer and director rows for the same stake.</td></tr>
       <tr><td>Weight</td><td><span class="mono">role strength × percent / 100</span>. Used only to group related providers. Not a share. Do not add the weight column.</td></tr>
       <tr><td>Origin</td><td><span class="mono">public:home-health-owners</span> or <span class="mono">public:hospice-owners</span>, the file the row came from.</td></tr>
@@ -96,17 +96,17 @@
   <h3>Why the percents add up past 100%</h3>
   <p>They are different layers. Add them only inside one layer, and only once per owner.</p>
   <ul>
-    <li><strong>Direct (role 34).</strong> Equity in this provider. One owner at 100% is a complete direct total. Several direct owners should generally add to about 100%. Count each associate once. If the same associate has two role 34 rows, do not count both.</li>
-    <li><strong>Indirect (role 35).</strong> Equity in a company that owns this provider. A 51% row and a 49% row can be a complete indirect layer. Do not add that 100% on top of the direct owner’s 100%.</li>
-    <li><strong>Control roles (officer, director, partner, managing employee).</strong> Medicare requires these even when the person is already listed as an owner. The percent is usually the same stake again. Leave them out of the total.</li>
+    <li><strong>Direct owner (CMS role 34).</strong> Equity in this provider. One owner at 100% is a complete direct total. Several direct owners should generally add to about 100%. Count each associate once. If the same associate has two direct-owner rows, do not count both.</li>
+    <li><strong>Indirect owner (CMS role 35).</strong> Equity in a company that owns this provider. A 51% row and a 49% row can be a complete indirect layer. Do not add that 100% on top of the direct owner’s 100%.</li>
+    <li><strong>Control relationships (officer, director, partner, managing employee).</strong> Medicare requires these even when the person is already listed as an owner. The percent is usually the same stake again. Leave them out of the total.</li>
   </ul>
   <p>A worked weight, using the strengths in this config:</p>
   <table>
-    <thead><tr><th>Role</th><th class="num">Percent</th><th class="num">Strength</th><th class="num">Weight</th></tr></thead>
+    <thead><tr><th>Relationship</th><th class="num">Percent</th><th class="num">Strength</th><th class="num">Weight</th></tr></thead>
     <tbody>
       {% for row in index.examples %}
       <tr>
-        <td class="mono">{{ row.code }}</td>
+        <td>{{ row.name }}</td>
         <td class="num">{{ row.percent }}</td>
         <td class="num">{{ row.strength }}</td>
         <td class="num">{{ row.weight }}</td>
@@ -115,12 +115,12 @@
     </tbody>
   </table>
   <p>A blank percent is treated as {{ "%g"|format(index.min_ownership_pct) }} only inside that weight formula, so a control role with no percent still has a small link. The percent cell on the provider page stays blank.</p>
-  <p>A row is kept when its percent is at least {{ "%g"|format(index.min_ownership_pct) }}, or when its role is a control role. “Ownership edges kept” is this filtered set. It is not a count of owners, and it is not a count of companies.</p>
+  <p>A row is kept when its percent is at least {{ "%g"|format(index.min_ownership_pct) }}, or when the relationship is a control relationship (officer, director, partner, or managing employee). “Ownership edges kept” is this filtered set. It is not a count of owners, and it is not a count of companies.</p>
 </section>
 
 <section class="card" id="roles">
-  <h2>Role codes</h2>
-  <p>The description column is the CMS owner role-code table. The last two columns are what this workstation does with that code.</p>
+  <h2>What each CMS role code means</h2>
+  <p>CMS calls this the owner role code. In this application the word is the relationship: direct owner, indirect owner, officer, director, or managing employee. The description column is the CMS table. The last two columns are what this workstation does with that code.</p>
   <table>
     <thead><tr><th>Code</th><th>CMS description</th><th>How to read it</th><th class="num">Strength</th><th>Kept under {{ "%g"|format(index.min_ownership_pct) }}%?</th></tr></thead>
     <tbody>
@@ -166,7 +166,7 @@
       </tr>
       <tr>
         <td><a href="https://data.cms.gov/sites/default/files/2026-07/Hospital_Data_Guidance.pdf">Medicare Fee-For-Service Provider Enrollment — Hospital: Data Guidance</a>, version 1.6, July 2026</td>
-        <td>Direct ownership is equity in the capital, the stock, or the profits of the disclosing entity. Indirect ownership is equity in an entity that owns the disclosing entity. Sum role 34 once per associate. That direct total should generally be about 100%. Do not add a second enrollment’s copy of the same owner. The SNF guidance for the same release says the same thing. Home health and hospice owner files use this PECOS layout.</td>
+        <td>Direct ownership is equity in the capital, the stock, or the profits of the disclosing entity. Indirect ownership is equity in an entity that owns the disclosing entity. Sum the direct-owner percent (CMS role 34) once per associate. That direct total should generally be about 100%. Do not add a second enrollment’s copy of the same owner. The SNF guidance for the same release says the same thing. Home health and hospice owner files use this PECOS layout.</td>
       </tr>
       <tr>
         <td><a href="https://data.cms.gov/sites/default/files/2026-07/Hospital_All_Owners_Data_Dictionary.pdf">Hospital All Owners data dictionary</a>, July 2026</td>

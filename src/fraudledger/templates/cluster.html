@@ -12,7 +12,7 @@
 </section>
 <section class="card">
   <h2>Shared owners</h2>
-  <p class="sub">The same PECOS associate id on at least two providers in this group. That id is CMS ASSOCIATE ID – OWNER. It is not an NPI. One person with several roles is still one owner.</p>
+  <p class="sub">The same PECOS associate id on at least two providers in this group. That id is CMS ASSOCIATE ID – OWNER. It is not an NPI. Direct owner (CMS role 34) is equity in the provider. Indirect owner (CMS role 35) is equity in a company that owns the provider. One person with several relationships is still one owner.</p>
   {% if shared_owners %}
   <table>
     <thead><tr><th>Owner</th><th class="num">Providers in this group</th><th>Which providers</th></tr></thead>
@@ -93,16 +93,16 @@
   <p>{{ group.sort_sentence }}</p>
 </details>
 <details class="card">
-  <summary>Every owner role, including owners of only one provider</summary>
-  <p class="sub">The same owner can appear once per role. The id is the PECOS associate id, not an NPI. Do not add the percents. <a href="/index#ownership">How to read a percent</a>.</p>
+  <summary>Every relationship CMS recorded, including owners of only one provider</summary>
+  <p class="sub">The same owner can appear once for each relationship. Direct owner (CMS role 34) is equity in this provider. Officer, director, and managing employee are control relationships, and the percent on those rows is often the same stake again. Do not add the percents. The id is the PECOS associate id, not an NPI. <a href="/index#roles">Every CMS role code</a>.</p>
   <table>
-    <thead><tr><th>PECOS associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th></tr></thead>
+    <thead><tr><th>PECOS associate id</th><th>Name</th><th>Relationship CMS recorded</th><th class="num">Percent</th></tr></thead>
     <tbody>
       {% for owner, name, role, percent in owners %}
       <tr>
         <td class="mono">{{ owner }}</td>
         <td>{{ name or "—" }}</td>
-        <td class="mono">{{ role or "—" }}</td>
+        <td>{{ role|role_label }}</td>
         <td class="num">{{ percent if percent is not none else "—" }}</td>
       </tr>
       {% else %}

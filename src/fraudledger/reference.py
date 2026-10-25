@@ -12,14 +12,14 @@ from fraudledger.settings import Settings
 # Hospital All Owners data dictionary (CMS, July 2026). Home health and hospice
 # owner files use the same codes.
 ROLE_CODES = (
-    ("01", "5% or more ownership interest", "Older combined ownership code. Do not add it on top of a role 34 row for the same owner."),
+    ("01", "5% or more ownership interest", "Older combined ownership code. Do not add it on top of a direct-owner row (CMS role 34) for the same owner."),
     ("03", "Partner", "Control role. Kept even under the percent floor. Not another slice of the direct total."),
     ("25", "Contracted managing employee", "Control role. Kept even under the percent floor. The percent is not equity to add."),
     ("34", "5% or greater direct ownership interest", "Direct equity in this provider. Sum once per owner. That sum should generally be about 100%."),
-    ("35", "5% or greater indirect ownership interest", "Equity in an owner of this provider. Keep it as its own layer. Do not add it to role 34."),
+    ("35", "5% or greater indirect ownership interest", "Equity in a company that owns this provider. Keep it as its own layer. Do not add it to the direct-owner percent (CMS role 34)."),
     ("36", "5% or greater mortgage interest", "A financial interest, not equity. Do not add it to the direct total."),
     ("37", "5% or greater security interest", "A financial interest, not equity. Do not add it to the direct total."),
-    ("38", "General partnership interest", "Partnership interest. Do not add it to role 34."),
+    ("38", "General partnership interest", "Partnership interest. Do not add it to the direct-owner percent (CMS role 34)."),
     ("39", "Limited partnership interest", "Partnership interest. Do not add it to the direct total."),
     ("40", "Officer", "Control role. Often repeats an ownership percent already listed. Do not add it again."),
     ("41", "Director", "Control role. Often repeats an ownership percent already listed. Do not add it again."),
@@ -27,6 +27,77 @@ ROLE_CODES = (
     ("43", "Operational/managerial control", "Control role. Kept even under the percent floor. Do not add it to the equity total."),
     ("44", "Other", "Kept only when the percent meets the floor. Read the source role text before you total it."),
 )
+
+_SHORT = {
+    "01": "owner, older combined code",
+    "03": "partner",
+    "25": "contracted managing employee",
+    "34": "direct owner",
+    "35": "indirect owner",
+    "36": "mortgage interest",
+    "37": "security interest",
+    "38": "general partner",
+    "39": "limited partner",
+    "40": "officer",
+    "41": "director",
+    "42": "W-2 managing employee",
+    "43": "operational control",
+    "44": "other relationship",
+}
+
+_ORIGIN = {
+    "public:home-health-owners": "CMS home-health owner file",
+    "public:hospice-owners": "CMS hospice owner file",
+    "public:home-health-enrollments": "CMS home-health enrollment file",
+    "public:hospice-enrollments": "CMS hospice enrollment file",
+    "public:nppes": "NPPES monthly file",
+    "public:leie": "OIG exclusion list",
+    "public:medicaid": "Medicaid Provider Spending",
+    "public": "a public file",
+}
+
+
+def role_key(code: object) -> str:
+    raw = "" if code is None else str(code).strip()
+    if raw.endswith(".0") and raw[:-2].replace(".", "", 1).isdigit():
+        raw = raw[:-2]
+    if not raw:
+        return ""
+    if raw.isdigit():
+        trimmed = raw.lstrip("0") or "0"
+        if len(trimmed) == 1:
+            return trimmed.zfill(2)
+        return trimmed
+    return raw
+
+
+def role_label(code: object) -> str:
+    """The relationship CMS recorded, with the role code beside it.
+
+    A bare number such as 34 is direct ownership of this provider. 35 is
+    ownership of a company that owns this provider. 40 and 41 are officer
+    and director. Those control rows are not a second share.
+    """
+    key = role_key(code)
+    if not key:
+        return "relationship not recorded"
+    short = _SHORT.get(key)
+    if short:
+        return f"{short} (CMS role {key})"
+    shown = "" if code is None else str(code).strip()
+    return f"CMS role {shown or key} (not in the CMS role table used here)"
+
+
+def origin_label(origin: object) -> str:
+    text = "" if origin is None else str(origin).strip()
+    if text in _ORIGIN:
+        return _ORIGIN[text]
+    if text.startswith("public:"):
+        rest = text.split(":", 1)[1].replace("-", " ")
+        return f"public file: {rest}"
+    if not text:
+        return "source not recorded"
+    return text
 
 _MONEY = {"min_paid", "min_abs_change", "min_latest_paid", "min_first_year_paid"}
 _LABELS = {
@@ -92,6 +163,7 @@ def reader_index(settings: Settings) -> dict:
         examples.append(
             {
                 "code": code,
+                "name": role_label(code),
                 "percent": f"{percent:g}",
                 "strength": f"{strength:.1f}",
                 "weight": f"{strength * percent / 100:.2f}",
@@ -151,10 +223,10 @@ def reading_notes(settings: Settings) -> str:
                 "Any other flagged provider is Monitor."
             ),
             "A cost peer is the provider's state when that state has enough billers of the code. Otherwise it is national.",
-            "An ownership edge is one role for one owner. Do not add the percent column.",
-            "Add role 34 once per owner for the direct share. CMS says that direct total should generally be about 100%.",
-            "Role 35 is indirect ownership of an owner. Do not add it to role 34.",
-            "Roles 40 and 41 are officer and director. Role 42 is a W-2 managing employee. The same percent on those rows is not a second stake.",
+            "An ownership line is one person or company, and one relationship CMS recorded.",
+            "Direct owner (CMS role 34) is equity in this provider. Count that percent once per owner. CMS says that direct total should generally be about 100%.",
+            "Indirect owner (CMS role 35) is equity in a company that owns this provider. Do not add it to the direct-owner percent.",
+            "Officer (CMS role 40), director (CMS role 41), and W-2 managing employee (CMS role 42) are control relationships. The same percent on those rows is not a second stake.",
             "Weight = role strength x percent / 100. It groups providers. It is not a share.",
             "The workstation How to read page has the full role-code index and the federal sources.",
         ]

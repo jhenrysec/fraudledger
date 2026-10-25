@@ -18,7 +18,7 @@ from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.detect.score import gap_by_provider, recount_cluster, unduplicated_excess
 from fraudledger.graph.links import shared_links, summarize
 from fraudledger.ingest.cleanup import purge_reserved
-from fraudledger.reference import explain_cluster, reader_index
+from fraudledger.reference import explain_cluster, origin_label, reader_index, role_label
 from fraudledger.report.assemble import DISCLAIMER
 from fraudledger.report.chart import chart_for
 from fraudledger.report.packet import _explain_flag, _heading_for, _weight_sentence
@@ -68,6 +68,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     finally:
         connection.close()
     templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+    templates.env.filters["role_label"] = role_label
+    templates.env.filters["origin_label"] = origin_label
     app = FastAPI(title="Fraud Ledger", version=__version__, docs_url=None, redoc_url=None)
 
     @app.middleware("http")

@@ -14,6 +14,7 @@ from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.detect.score import R11_BONUS, unduplicated_excess
 from fraudledger.report.assemble import BANNED, DISCLAIMER, _esc
 from fraudledger.report.chart import chart_for, paid_drawing
+from fraudledger.reference import role_label
 from fraudledger.reviews import PROVIDER_KEY
 from fraudledger.settings import Settings
 
@@ -471,7 +472,7 @@ def _owner_lines(edges: list) -> list[str]:
             order.append(key)
             grouped[key] = {"name": (owner_name or "").strip(), "roles": []}
         shown = "no percent" if percent is None else f"{float(percent):g}%"
-        grouped[key]["roles"].append(f"role {role or 'blank'} at {shown}")
+        grouped[key]["roles"].append(f"{role_label(role)} at {shown}")
     lines = []
     for key in order:
         slot = grouped[key]
@@ -867,9 +868,15 @@ def build_packet(
         "body",
         "An ownership line is one person or company. The id in parentheses is the PECOS associate id, "
         "column ASSOCIATE ID - OWNER in the CMS owner file. It is not an NPI. "
-        "A person and a company each have one. Several roles for that same id are one owner, not several shares. "
-        "Do not add the percent column. Role 34 is direct ownership and those percents should generally come to about 100 percent. "
-        "Role 35 is ownership of an owner. Officer and director rows often repeat a stake already listed.",
+        "The words after the colon are the relationship CMS recorded for that owner on this provider. "
+        "Direct owner (CMS role 34) means equity in this provider. Count each associate once. "
+        "Those direct-owner percents should generally come to about 100 percent. "
+        "Indirect owner (CMS role 35) means equity in a company that owns this provider. "
+        "Do not add that percent on top of the direct owner. "
+        "Officer (CMS role 40), director (CMS role 41), and managing employee are control relationships. "
+        "Medicare requires those even when the same person is already listed as an owner, "
+        "and the percent on those rows is usually the same stake again. "
+        "Several relationships for the same id are one owner, not several shares.",
     ))
     owner_lines = _owner_lines(edges)
     if not owner_lines:

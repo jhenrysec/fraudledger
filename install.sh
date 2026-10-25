@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Fraud Ledger installer for one Ubuntu Desktop machine (24.04 or 26.04).
-#   bash install.sh              system install, systemd, no demonstration data
+#   bash install.sh              system install, systemd
 #   bash install.sh --user       virtualenv in this clone, no systemd
-#   bash install.sh --demo       also load the fictional fixture
 #   bash install.sh --no-start   install but do not start the UI
 set -euo pipefail
 
@@ -34,27 +33,22 @@ if [[ "$want_user" -eq 0 && "$(id -u)" -ne 0 ]]; then
   exec sudo -E env FRAUDLEDGER_INSTALL_REEXEC=1 bash "$ROOT/install.sh" "$@"
 fi
 
-NO_DEMO=1
 NO_START=0
 USER_MODE=$want_user
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) USER_MODE=1; shift ;;
-    --demo) NO_DEMO=0; shift ;;
-    --no-demo) NO_DEMO=1; shift ;;
     --no-start) NO_START=1; shift ;;
     -h|--help)
       cat <<'EOF'
-Usage: bash install.sh [--user] [--demo] [--no-start]
+Usage: bash install.sh [--user] [--no-start]
 
 Without flags, on Ubuntu Desktop 24.04 or 26.04, this installs a system
 virtualenv and a local-only systemd service on 127.0.0.1:8088. It does not
-load fictional data. Open that address and use Sources to load the public
+load billing data. Open that address and use Sources to load the public
 working set.
 
   --user      Install into .venv in this clone and start with nohup. No systemd.
-  --demo      Load fictional NPIs in the 199999xxxx range. Not for reporting.
-  --no-demo   Accepted for older notes. This is already the default.
   --no-start  Do not start the review UI.
 EOF
       exit 0
@@ -136,9 +130,6 @@ text = text.replace("data_dir: /var/lib/fraudledger", "data_dir: " + json.dumps(
 (root / "var/config.yaml").write_text(text, encoding="utf-8")
 PY
   fi
-  if [[ "$NO_DEMO" -eq 0 ]]; then
-    FRAUDLEDGER_CONFIG="$ROOT/var/config.yaml" "$ROOT/.venv/bin/fraudledger" demo
-  else
     if [[ -f "$ROOT/var/fraudledger.pid" ]]; then
       old="$(cat "$ROOT/var/fraudledger.pid" || true)"
       if [[ -n "${old}" ]] && kill -0 "$old" 2>/dev/null; then
@@ -146,8 +137,7 @@ PY
         sleep 1
       fi
     fi
-    FRAUDLEDGER_CONFIG="$ROOT/var/config.yaml" "$ROOT/.venv/bin/fraudledger" drop-demo
-  fi
+    FRAUDLEDGER_CONFIG="$ROOT/var/config.yaml" "$ROOT/.venv/bin/fraudledger" init
   cat >"$ROOT/.venv/bin/fraudledger" <<EOF
 #!/usr/bin/env bash
 export FRAUDLEDGER_CONFIG="${ROOT}/var/config.yaml"
@@ -219,20 +209,12 @@ install_system() {
   install -m 0644 "$ROOT/deploy/fraudledger-ingest.timer" /etc/systemd/system/fraudledger-ingest.timer
   systemctl daemon-reload
   systemctl enable fraudledger.service fraudledger-ingest.timer
-  if [[ "$NO_DEMO" -eq 0 ]]; then
-    sudo -u fraudledger env \
-      HOME=/var/lib/fraudledger \
-      XDG_CACHE_HOME=/var/lib/fraudledger/tmp \
-      FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
-      /opt/fraudledger/venv/bin/fraudledger demo
-  else
-    systemctl stop fraudledger.service || true
-    sudo -u fraudledger env \
-      HOME=/var/lib/fraudledger \
-      XDG_CACHE_HOME=/var/lib/fraudledger/tmp \
-      FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
-      /opt/fraudledger/venv/bin/fraudledger drop-demo
-  fi
+  systemctl stop fraudledger.service || true
+  sudo -u fraudledger env \
+    HOME=/var/lib/fraudledger \
+    XDG_CACHE_HOME=/var/lib/fraudledger/tmp \
+    FRAUDLEDGER_CONFIG=/etc/fraudledger/config.yaml \
+    /opt/fraudledger/venv/bin/fraudledger init
   if [[ "$NO_START" -eq 0 ]]; then
     systemctl restart fraudledger.service
     systemctl start fraudledger-ingest.timer

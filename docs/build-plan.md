@@ -428,7 +428,7 @@ Each phase ends with a command that runs on a laptop-sized fixture and on a one-
 - `bootstrap-ubuntu.sh` creates user, directories, venv, and package pins.
 - `fraudledger --version` and `fraudledger doctor` (Python, DuckDB, disk free, config loads).
 - Empty DuckDB schema applied.
-- Unit test harness with a 50-provider synthetic parquet (hand-built numbers, fictional NPIs in a reserved test range such as `1999990000+`).
+- Unit test harness with a small hand-built public-file fixture. The installed application does not load it.
 
 Exit: `pytest` green, no network required.
 

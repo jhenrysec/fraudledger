@@ -54,7 +54,6 @@ def ingest_medicaid(
     settings: Settings,
     path: str | None = None,
     url: str | None = None,
-    drop_demo: bool = False,
     focus: str | None = None,
 ) -> int:
     settings.ensure_dirs()
@@ -116,10 +115,9 @@ def ingest_medicaid(
         if partial.exists():
             partial.unlink()
         raise
-    if drop_demo:
-        from fraudledger.ingest.demo import purge_demo
+    from fraudledger.ingest.cleanup import purge_reserved
 
-        purge_demo(con, settings)
+    purge_reserved(con, settings)
     count_files = refresh_facts_view(con, settings.data_dir / "parquet" / "facts")
     _record_snapshot(con, "medicaid", locator, source, digest, note)
     return count_files
@@ -403,8 +401,8 @@ def ingest_nppes(
     """Load NPPES enumeration dates and practice locations.
 
     The monthly CMS file name includes a date, so the operator sets the
-    current zip URL. Only 10-digit NPIs are kept. Demonstration rows keep
-    their origin so a later public file cannot silently rebrand them.
+    current zip URL. Only 10-digit NPIs are kept. An existing provider row
+    keeps its origin.
     """
     settings.ensure_dirs()
     source, locator = _input_path(settings, path, url, "nppes")

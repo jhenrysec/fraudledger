@@ -10,7 +10,7 @@ from fraudledger.columns import resolve_columns
 from fraudledger.db import connect
 from fraudledger.graph.cluster import build_communities
 from fraudledger.graph.edges import qualifies, weight
-from fraudledger.ingest.demo import load_demo
+from tests.fixture import load_demo
 from fraudledger.ingest.public import ingest_medicaid, ingest_nppes, ingest_ownership
 from fraudledger.pipeline import execute_run
 from fraudledger.report.assemble import BANNED, verify_run
@@ -231,7 +231,36 @@ class ApiTests(unittest.TestCase):
             settings = load_settings(data_dir=tmp)
             settings.ensure_dirs()
             con = connect(settings.db_path)
-            load_demo(con, settings)
+            path = Path(tmp) / "spend.csv"
+            path.write_text(
+                "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES,TOTAL_UNIQUE_BENEFICIARIES\n"
+                "1234567802,T1019,2024-01-01,100,2,1\n"
+                "1234567803,T1019,2024-01-01,80,2,1\n",
+                encoding="utf-8",
+            )
+            from fraudledger.ingest.public import ingest_medicaid
+
+            ingest_medicaid(con, settings, path=str(path))
+            con.executemany(
+                """
+                INSERT INTO providers (
+                    provider_key, npi, name, address, city, state, origin
+                ) VALUES (?, ?, ?, '10 SHARED WAY', 'PHOENIX', 'AZ', 'public')
+                """,
+                [
+                    ("1234567802", "1234567802", "Linked One"),
+                    ("1234567803", "1234567803", "Linked Two"),
+                ],
+            )
+            con.executemany(
+                """
+                INSERT INTO ownership_edges (
+                    owner_key, owner_name, provider_key, percentage, role_code,
+                    role_strength, edge_weight, origin
+                ) VALUES ('A100', 'Shared Control LLC', ?, 100, '34', 3, 3, 'public')
+                """,
+                [("1234567802",), ("1234567803",)],
+            )
             execute_run(con, settings, run_id="API")
             con.close()
             client = TestClient(create_app(settings))
@@ -240,14 +269,15 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(health.json()["status"], "ok")
             page = client.get("/")
             self.assertEqual(page.status_code, 200)
-            self.assertIn("1999990001", page.text)
-            self.assertIn("Demonstration data", page.text)
+            self.assertNotIn("199999", page.text)
+            self.assertNotIn("demonstration", page.text.lower())
+            self.assertNotIn("fictional", page.text.lower())
             groups = client.get("/clusters")
             self.assertEqual(groups.status_code, 200)
             self.assertIn("What this list is highlighting", groups.text)
             self.assertIn("have a billing indicator", groups.text)
             self.assertIn("Shared Control LLC", groups.text)
-            self.assertIn("10 SHARED WAY, PHOENIX, AZ", groups.text)
+            self.assertIn("PECOS associate id", groups.text)
             import re
             cluster_ids = list(dict.fromkeys(re.findall(r"/cluster/(\d+)", groups.text)))
             self.assertTrue(cluster_ids)
@@ -255,14 +285,8 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(detail.status_code, 200)
             self.assertIn("Shared owners", detail.text)
             self.assertIn("Shared addresses", detail.text)
-            self.assertIn("demonstration data", page.text.lower())
-            denied = client.get("/report/1999990001?run=API")
-            self.assertEqual(denied.status_code, 409)
-            removed = client.post("/demo/remove", follow_redirects=False)
-            self.assertEqual(removed.status_code, 303)
-            cleared = client.get("/")
-            self.assertNotIn("1999990001", cleared.text)
-            self.assertNotIn("Demonstration data", cleared.text)
+            self.assertIn("PECOS associate id A100", detail.text)
+            self.assertEqual(client.post("/demo/remove").status_code, 404)
             self.assertNotIn("fraudster", page.text.lower())
             missing = client.get("/provider/not a key")
             self.assertEqual(missing.status_code, 400)
@@ -280,6 +304,8 @@ class ApiTests(unittest.TestCase):
             self.assertIn("Your own URL", page.text)
             self.assertIn("Medicaid Provider Spending", page.text)
             self.assertIn("Public working set", page.text)
+            self.assertNotIn("fictional", page.text.lower())
+            self.assertNotIn("demonstration", page.text.lower())
             status = Path(tmp) / "logs" / "pull_status.json"
             status.parent.mkdir(parents=True, exist_ok=True)
             status.write_text(
@@ -511,12 +537,6 @@ class PublicReportTests(unittest.TestCase):
             settings = load_settings(data_dir=tmp)
             settings.ensure_dirs()
             con = connect(settings.db_path)
-            load_demo(con, settings)
-            execute_run(con, settings, run_id="DEMO")
-            with self.assertRaises(SystemExit) as caught:
-                build_packet(con, settings, "DEMO", "1999990001")
-            self.assertIn("demonstration", str(caught.exception).lower())
-
             path = Path(tmp) / "spend.csv"
             path.write_text(
                 "BILLING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES,TOTAL_UNIQUE_BENEFICIARIES\n"
@@ -524,7 +544,7 @@ class PublicReportTests(unittest.TestCase):
                 "1234567893,99213,2024-01-01,50,1,1\n",
                 encoding="utf-8",
             )
-            ingest_medicaid(con, settings, path=str(path), drop_demo=True, focus="priority")
+            ingest_medicaid(con, settings, path=str(path), focus="priority")
             codes = {row[0] for row in con.execute("SELECT hcpcs FROM facts_medicaid").fetchall()}
             self.assertEqual(codes, {"T2042"})
             execute_run(con, settings, run_id="PUBLIC")
@@ -544,6 +564,7 @@ class PublicReportTests(unittest.TestCase):
             self.assertIn("What the data indicates", narrative)
             self.assertIn("Dollar figures", narrative)
             self.assertIn("Dollars above a typical peer", narrative)
+            self.assertIn("PECOS associate id", narrative)
             self.assertTrue(pdf.startswith(b"%PDF"))
             self.assertGreater(len(pdf), 2000)
             self.assertIn("does not contact", submit.lower())
@@ -552,7 +573,16 @@ class PublicReportTests(unittest.TestCase):
                 self.assertNotIn(phrase, blob)
             con.close()
 
-    def test_national_rate_sentence_does_not_append_the_state(self) -> None:
+    def test_owner_line_names_the_pecos_associate_id(self) -> None:
+        from fraudledger.report.packet import _owner_lines
+
+        lines = _owner_lines(
+            [("7911382882", "EXTENDED CHHA ACQUISITION, LLC", "34", 100, 3, "public:home-health-owners")]
+        )
+        self.assertEqual(
+            lines,
+            ["EXTENDED CHHA ACQUISITION, LLC (PECOS associate id 7911382882): role 34 at 100%."],
+        )
         from fraudledger.report.packet import _explain_flag, _weight_sentence
 
         text = _explain_flag(
@@ -585,7 +615,7 @@ class PublicReportTests(unittest.TestCase):
         self.assertNotIn("fraud amount", (text + jump + weights).lower())
 
     def test_purge_keeps_a_public_row(self) -> None:
-        from fraudledger.ingest.demo import purge_demo
+        from fraudledger.ingest.cleanup import purge_reserved
         from fraudledger.ingest.public import ingest_medicaid
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -601,8 +631,8 @@ class PublicReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             ingest_medicaid(con, settings, path=str(path))
-            message = purge_demo(con, settings)
-            self.assertIn("Public rows were not deleted", message)
+            message = purge_reserved(con, settings)
+            self.assertIn("Public rows were kept", message)
             self.assertFalse((Path(tmp) / "parquet" / "facts" / "demo.parquet").exists())
             self.assertEqual(
                 con.execute("SELECT COUNT(*) FROM providers WHERE provider_key LIKE '199999%'").fetchone()[0],

@@ -24,7 +24,7 @@
 
 <section class="card">
   <h2>Public working set</h2>
-  <p>This is the path that scores real billing. It loads the OIG exclusion list, hospice enrollments and owners, home-health enrollments and owners, and NPPES when the CMS index is online. It loads the latest Medicare hospice and home-health provider files, plus Hospice Care Compare and Home Health Care Compare. It then loads Medicaid and keeps hospice, home health, and personal-care procedure codes, removes fictional demonstration rows, and scores what loaded. The Medicaid file itself is still multi-gigabyte. Monthly patient counts in that file are kept. A payment jump that only tracks the patient count, or that barely changes paid per patient, is not flagged. Care Compare is corroboration. It is not loaded as a Critical finding by itself. HCRIS cost reports, SAM.gov, and state Medicaid exclusion lists are not part of this pull.</p>
+  <p>This loads the OIG exclusion list, hospice enrollments and owners, home-health enrollments and owners, and NPPES when the CMS index is online. It loads the latest Medicare hospice and home-health provider files, plus Hospice Care Compare and Home Health Care Compare. It then loads Medicaid and keeps hospice, home health, and personal-care procedure codes, and scores what loaded. The Medicaid file itself is still multi-gigabyte. Monthly patient counts in that file are kept. A payment jump that only tracks the patient count, or that barely changes paid per patient, is not flagged. Care Compare is corroboration. It is not loaded as a Critical finding by itself. HCRIS cost reports, SAM.gov, and state Medicaid exclusion lists are not part of this pull.</p>
   <form method="post" action="/sources">
     <input type="hidden" name="mode" value="working">
     <button type="submit" {% if running %}disabled{% endif %}>Load the public working set</button>
@@ -42,10 +42,6 @@
       <h3 style="margin:0 0 4px;">{{ source.title }}</h3>
       <p style="margin:0 0 6px;">{{ source.summary }}</p>
       <p class="sub" style="margin:0 0 8px;">{{ source.size_note }} <a href="{{ source.page }}">Dataset page</a></p>
-      <label style="display:flex; gap:8px; align-items:center; color:inherit;">
-        <input type="checkbox" name="drop_demo" value="1" {% if source.key == 'medicaid' %}checked{% endif %}>
-        Remove fictional demonstration rows
-      </label>
       {% if source.key == 'medicaid' %}
       <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:6px;">
         <input type="checkbox" name="focus" value="priority" checked>
@@ -74,10 +70,6 @@
         {% endfor %}
       </select>
       <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:10px;">
-        <input type="checkbox" name="drop_demo" value="1">
-        Remove fictional demonstration rows
-      </label>
-      <label style="display:flex; gap:8px; align-items:center; color:inherit; margin-top:6px;">
         <input type="checkbox" name="focus" value="priority">
         If this is a Medicaid file, keep hospice, home health, and personal-care codes only
       </label>

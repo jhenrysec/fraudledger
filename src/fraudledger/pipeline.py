@@ -30,7 +30,7 @@ def new_run_id() -> str:
 def execute_run(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str | None = None) -> str:
     facts = con.execute("SELECT COUNT(*) FROM facts_medicaid").fetchone()[0]
     if not facts:
-        raise SystemExit("No billing facts loaded. Run `fraudledger demo` or `fraudledger ingest medicaid`.")
+        raise SystemExit("No billing facts loaded. Load a public extract, then run again.")
     run_id = run_id or new_run_id()
     demo_only = con.execute(
         """

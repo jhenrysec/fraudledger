@@ -16,21 +16,20 @@ cd fraudledger
 bash install.sh
 ```
 
-That uses sudo once. It installs Python packages into `/opt/fraudledger/venv`, creates a `fraudledger` system user, writes `/etc/fraudledger/config.yaml` if it is missing, and starts a systemd service. It does not load fictional data. Open `http://127.0.0.1:8088/sources` and choose **Load the public working set**. Wayland versus X11 does not matter; this is a local web page.
+That uses sudo once. It installs Python packages into `/opt/fraudledger/venv`, creates a `fraudledger` system user, writes `/etc/fraudledger/config.yaml` if it is missing, and starts a systemd service. It does not load billing data. Open `http://127.0.0.1:8088/sources` and choose **Load the public working set**. Wayland versus X11 does not matter; this is a local web page.
 
 Ubuntu 26.04 Desktop's default Python is 3.14. The installer uses that interpreter and installs a DuckDB build that already has a 3.14 wheel, so it does not compile a database engine on the machine.
 
 ```bash
 bash install.sh --user       # virtualenv in this clone, no systemd
-bash install.sh --demo       # also load fictional NPIs; not for a report
 bash install.sh --no-start   # install services but do not start the UI
 ```
 
-The public working set is the real review path. It loads the OIG exclusion list, hospice and home-health enrollments and owners, NPPES when the CMS index is online, the latest Medicare hospice and home-health provider files, Hospice Care Compare, Home Health Care Compare, and the Medicaid Provider Spending extract. Only hospice, home health, and personal-care procedure codes are written into the warehouse. Monthly patient counts are kept. A payment jump that tracks the patient count, or that leaves paid per patient almost unchanged, is not flagged. A provider that bills only the expected codes for hospice (and has a hospice taxonomy), home health, or personal care is not flagged for a narrow or flat pattern. A cost outlier is compared with other billers in the provider's state when that state has at least 30. Otherwise the comparison is national. An incorporation date, when the enrollment file has one, is used before the NPPES date. A missing date is not treated as a new organization. An owner matches the exclusion list on first name, last name, and state, and on middle name when both sides have one. A reinstated person is not flagged. The agency name is not matched. Care Compare live discharges and home-health readmissions are corroborating indicators. They are not a Critical tier by themselves. HCRIS cost reports, SAM.gov, and state Medicaid exclusion lists are not loaded. The download is still the full multi-gigabyte extract, so leave a large free disk and at least 16 GB of RAM. A smaller machine can load the LEIE and the owner files, or `bash install.sh --demo` for the fictional fixture.
+The public working set is the review path. It loads the OIG exclusion list, hospice and home-health enrollments and owners, NPPES when the CMS index is online, the latest Medicare hospice and home-health provider files, Hospice Care Compare, Home Health Care Compare, and the Medicaid Provider Spending extract. Only hospice, home health, and personal-care procedure codes are written into the warehouse. Monthly patient counts are kept. A payment jump that tracks the patient count, or that leaves paid per patient almost unchanged, is not flagged. A provider that bills only the expected codes for hospice (and has a hospice taxonomy), home health, or personal care is not flagged for a narrow or flat pattern. A cost outlier is compared with other billers in the provider's state when that state has at least 30. Otherwise the comparison is national. An incorporation date, when the enrollment file has one, is used before the NPPES date. A missing date is not treated as a new organization. An owner matches the exclusion list on first name, last name, and state, and on middle name when both sides have one. A reinstated person is not flagged. The agency name is not matched. Care Compare live discharges and home-health readmissions are corroborating indicators. They are not a Critical tier by themselves. HCRIS cost reports, SAM.gov, and state Medicaid exclusion lists are not loaded. The download is still the full multi-gigabyte extract, so leave a large free disk and at least 16 GB of RAM. A smaller machine can load the LEIE and the owner files.
 
 The `--user` command wires `.venv/bin/fraudledger` at this clone's `var/config.yaml`. The system command uses `/etc/fraudledger/config.yaml` and does not depend on the clone staying on disk.
 
-Re-running the installer does not overwrite an existing config file. Unless you pass `--demo`, it also deletes fictional rows already in the database. `fraudledger drop-demo` does the same thing without reinstalling. Public extracts are kept.
+Re-running the installer does not overwrite an existing config file. Public extracts are kept. Starting the review UI also drops leftover rows that are not from a public extract.
 
 ## What a run stores
 
@@ -47,23 +46,22 @@ Each run directory under the data directory (`/var/lib/fraudledger/runs/<id>` by
 
 ```bash
 fraudledger doctor
-fraudledger demo
 fraudledger ingest medicaid --path spending.csv
-fraudledger ingest medicaid --url "$MEDICAID_URL" --drop-demo
+fraudledger ingest medicaid --url "$MEDICAID_URL"
 fraudledger ingest leie --path UPDATED.csv
 fraudledger ingest nppes --path NPPES_Data_Dissemination.zip
 fraudledger ingest ownership --path hospice_owners.csv --kind hospice_owners
 fraudledger run
 fraudledger verify-run 20261021T120000Z
 fraudledger export-tip 20261021T120000Z
-fraudledger review 1999990001 --state watch --note "Compare to the enrollment file"
+fraudledger review 1234567890 --state watch --note "Compare to the enrollment file"
 fraudledger serve
 fraudledger sources
 fraudledger pull leie
 fraudledger pull hospice
 fraudledger pull --working
-fraudledger pull medicaid --drop-demo --focus priority
-fraudledger pull --url "$FILE_URL" --as medicaid --drop-demo
+fraudledger pull medicaid --focus priority
+fraudledger pull --url "$FILE_URL" --as medicaid
 fraudledger pull --all
 fraudledger refresh
 fraudledger report 1234567890 --run 20261021T120000Z

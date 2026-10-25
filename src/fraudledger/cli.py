@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
-from fraudledger.ingest.demo import load_demo
+from fraudledger.ingest.cleanup import purge_reserved
 from fraudledger.ingest.public import ingest_enrollments, ingest_leie, ingest_medicaid, ingest_nppes, ingest_ownership
 from fraudledger.pipeline import execute_run
 from fraudledger.report.assemble import verify_run
@@ -20,6 +20,7 @@ def _open(args: argparse.Namespace):
     settings.ensure_dirs()
     con = connect(settings.db_path)
     refresh_facts_view(con, settings.data_dir / "parquet" / "facts")
+    purge_reserved(con, settings)
     return settings, con
 
 
@@ -60,29 +61,6 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_demo(args: argparse.Namespace) -> int:
-    settings, con = _open(args)
-    load_demo(con, settings)
-    print("Loaded fictional demonstration facts (NPI range 199999xxxx).")
-    if not args.no_run:
-        run_id = execute_run(con, settings)
-        print(f"Run {run_id}")
-        print(f"Report {settings.data_dir / 'runs' / run_id / 'report.txt'}")
-    con.close()
-    return 0
-
-
-def _cmd_drop_demo(args: argparse.Namespace) -> int:
-    from fraudledger.ingest.demo import purge_demo
-
-    settings, con = _open(args)
-    try:
-        print(purge_demo(con, settings))
-    finally:
-        con.close()
-    return 0
-
-
 def _cmd_ingest(args: argparse.Namespace) -> int:
     settings, con = _open(args)
     if args.source == "medicaid":
@@ -91,7 +69,6 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
             settings,
             path=args.path,
             url=args.url,
-            drop_demo=args.drop_demo,
             focus=args.focus,
         )
         print(f"Medicaid facts files in view: {count}")
@@ -196,7 +173,6 @@ def _cmd_pull(args: argparse.Namespace) -> int:
                 settings,
                 args.as_kind,
                 url=args.url,
-                drop_demo=args.drop_demo,
                 focus=args.focus if args.as_kind == "medicaid" else None,
             )
             print(message)
@@ -206,12 +182,12 @@ def _cmd_pull(args: argparse.Namespace) -> int:
             messages = []
             for key in keys:
                 print(f"Pulling {key}...")
-                messages.append(pull(con, settings, key, drop_demo=args.drop_demo and key == "medicaid"))
+                messages.append(pull(con, settings, key))
             print("\n".join(messages))
         elif args.source:
             if args.source not in keys:
                 raise SystemExit(f"Unknown source {args.source}. Try: {', '.join(keys)}")
-            message = pull(con, settings, args.source, drop_demo=args.drop_demo, focus=args.focus)
+            message = pull(con, settings, args.source, focus=args.focus)
             print(message)
         else:
             raise SystemExit("Pass a source name, --url, or --all. See `fraudledger sources`.")
@@ -335,12 +311,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="Print versions, paths, and whether the data directory is writable.")
     sub.add_parser("init", help="Create the data directories and the warehouse.")
 
-    demo = sub.add_parser("demo", help="Load fictional NPIs and, by default, run detection.")
-    demo.add_argument("--no-run", action="store_true", help="Load the fixture without scoring it.")
-    demo.set_defaults(func=_cmd_demo)
-    drop_demo = sub.add_parser("drop-demo", help="Delete fictional demonstration rows and demonstration runs. Public data stays.")
-    drop_demo.set_defaults(func=_cmd_drop_demo)
-
     ingest = sub.add_parser("ingest", help="Load a public file from disk or a URL.")
     ingest_sub = ingest.add_subparsers(dest="source", required=True)
     for name, help_text in (
@@ -354,11 +324,6 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--url")
         command.set_defaults(func=_cmd_ingest)
         if name == "medicaid":
-            command.add_argument(
-                "--drop-demo",
-                action="store_true",
-                help="Remove fictional demonstration facts before publishing this extract into the view.",
-            )
             command.add_argument(
                 "--focus",
                 choices=["priority"],
@@ -393,8 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="How to read --url.",
     )
     pull.add_argument("--all", action="store_true", help="Pull every known source. The Medicaid file is multi-gigabyte.")
-    pull.add_argument("--working", action="store_true", help="Load LEIE, hospice, home health, NPPES if the index is up, and priority Medicaid codes. Removes demonstration rows.")
-    pull.add_argument("--drop-demo", action="store_true", help="Remove fictional rows when loading Medicaid.")
+    pull.add_argument("--working", action="store_true", help="Load LEIE, hospice, home health, NPPES if the index is up, and priority Medicaid codes.")
     pull.add_argument(
         "--focus",
         choices=["priority"],

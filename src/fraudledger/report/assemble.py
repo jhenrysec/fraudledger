@@ -76,11 +76,6 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         DISCLAIMER,
         "",
     ]
-    if demo_only:
-        text_parts.append(
-            "DEMONSTRATION DATA. Providers use fictional NPIs in the 199999xxxx range. They are not real entities."
-        )
-        text_parts.append("")
     text_parts.append("Methodology")
     text_parts.append(f"Config SHA-256: {settings.config_sha256}")
     text_parts.append(
@@ -197,7 +192,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
             text_parts.append("  No owner or address is on more than one provider in this group.")
         for owner in shared["owners"]:
             text_parts.append(
-                f"  Shared owner {owner['name']} ({owner['key']}) is on {owner['provider_count']} providers: {owner['who']}."
+                f"  Shared owner {owner['name']} (PECOS associate id {owner['key']}) is on {owner['provider_count']} providers: {owner['who']}."
             )
         for place in shared["addresses"]:
             text_parts.append(
@@ -220,7 +215,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
         "disclaimer": DISCLAIMER,
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    html = _html(run_id, bool(demo_only), html_findings, DISCLAIMER, settings.config_sha256)
+    html = _html(run_id, html_findings, DISCLAIMER, settings.config_sha256)
     if any(phrase in html.lower() for phrase in BANNED):
         raise RuntimeError("HTML report contains a banned phrase")
     (run_dir / "report.html").write_text(html, encoding="utf-8")
@@ -229,12 +224,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
     return run_dir
 
 
-def _html(run_id: str, demo: bool, findings: list[str], disclaimer: str, config_hash: str) -> str:
-    banner = (
-        "<p class='banner'>Demonstration data only. Fictional NPIs in the 199999xxxx range. Not real entities.</p>"
-        if demo
-        else ""
-    )
+def _html(run_id: str, findings: list[str], disclaimer: str, config_hash: str) -> str:
     body = "\n".join(findings) or "<p>No elevated leads in this run.</p>"
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -263,7 +253,6 @@ def _html(run_id: str, demo: bool, findings: list[str], disclaimer: str, config_
   <h1>Review leads</h1>
   <p class="meta">Run {escape(run_id)} · config {escape(config_hash[:16])}</p>
   <p class="disclaimer">{escape(disclaimer)}</p>
-  {banner}
   {body}
 </main>
 </body>

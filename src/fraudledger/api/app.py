@@ -16,6 +16,7 @@ from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.graph.links import shared_links, summarize
+from fraudledger.ingest.cleanup import purge_reserved
 from fraudledger.reference import explain_cluster, reader_index
 from fraudledger.report.assemble import DISCLAIMER
 from fraudledger.report.chart import chart_for
@@ -54,6 +55,11 @@ def _bytes_label(value: object) -> str:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     settings.ensure_dirs()
+    connection = connect(settings.db_path)
+    try:
+        purge_reserved(connection, settings)
+    finally:
+        connection.close()
     templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
     app = FastAPI(title="Fraud Ledger", version=__version__, docs_url=None, redoc_url=None)
 
@@ -504,9 +510,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except SystemExit as exc:
                 text = str(exc)
                 lowered = text.lower()
-                if "demonstration" in lowered:
-                    status = 409
-                elif "not in this run" in lowered or "no run" in lowered:
+                if "not in this run" in lowered or "no run" in lowered:
                     status = 404
                 else:
                     status = 400
@@ -605,7 +609,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source: str = Form(""),
         url: str = Form(""),
         as_kind: str = Form(""),
-        drop_demo: str = Form(""),
         run_after: str = Form(""),
         focus: str = Form(""),
     ):
@@ -616,7 +619,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return RedirectResponse("/sources", status_code=303)
         known = {item.key for item in KNOWN_SOURCES}
         kinds = {item[0] for item in CUSTOM_KINDS}
-        remove_demo = drop_demo == "1"
         score = run_after == "1" or mode == "working"
         chosen_focus = "priority" if focus == "priority" else None
         if mode == "working":
@@ -669,7 +671,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         target_key,
                         url=target_url,
                         focus=chosen_focus,
-                        drop_demo=remove_demo,
                     )
                 messages: list[str] = []
                 for key, source_url, options in steps:
@@ -690,7 +691,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                         key,
                                         dest,
                                         source_url,
-                                        drop_demo=bool(options.get("drop_demo")),
                                         focus=options.get("focus"),
                                     )
                                 )
@@ -727,19 +727,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         threading.Thread(target=job, name="fraudledger-pull", daemon=True).start()
         return RedirectResponse("/sources", status_code=303)
-
-    @app.post("/demo/remove")
-    def remove_demo():
-        from fraudledger.ingest.demo import purge_demo
-
-        if read_status().get("running"):
-            raise HTTPException(409, "A pull is running. Wait until it finishes, then remove the demonstration data.")
-
-        def write(connection):
-            purge_demo(connection, settings)
-
-        call(write)
-        return RedirectResponse("/", status_code=303)
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception):

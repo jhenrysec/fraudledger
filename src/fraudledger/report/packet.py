@@ -446,7 +446,7 @@ def _owner_lines(edges: list) -> list[str]:
     for key in order:
         slot = grouped[key]
         who = slot["name"] or "Unnamed owner"
-        lines.append(f"{who} ({key}): " + "; ".join(slot["roles"]) + ".")
+        lines.append(f"{who} (PECOS associate id {key}): " + "; ".join(slot["roles"]) + ".")
     return lines
 
 
@@ -566,11 +566,6 @@ def build_packet(
         raise SystemExit(f"No run {run_id}.")
     if row[1] != "succeeded":
         raise SystemExit(f"Run {run_id} did not succeed.")
-    if row[0]:
-        raise SystemExit(
-            "This run only contains demonstration data. "
-            "Load the public working set before preparing a report packet."
-        )
     present = con.execute(
         """
         SELECT
@@ -839,7 +834,9 @@ def build_packet(
         blocks.append(("body", "This provider is not in an ownership group in this run."))
     blocks.append((
         "body",
-        "An ownership line is one person or company. Several roles for that same party are one owner, not several shares. "
+        "An ownership line is one person or company. The id in parentheses is the PECOS associate id, "
+        "column ASSOCIATE ID - OWNER in the CMS owner file. It is not an NPI. "
+        "A person and a company each have one. Several roles for that same id are one owner, not several shares. "
         "Do not add the percent column. Role 34 is direct ownership and those percents should generally come to about 100 percent. "
         "Role 35 is ownership of an owner. Officer and director rows often repeat a stake already listed.",
     ))
@@ -854,7 +851,7 @@ def build_packet(
     if shared_owners:
         blocks.append(("body", "Owners also listed on another provider in the same ownership group:"))
         for owner_key, owner_name, count in shared_owners:
-            blocks.append(("body", f"{owner_name or 'Unnamed'} ({owner_key}) is on {int(count)} providers in the group."))
+            blocks.append(("body", f"{owner_name or 'Unnamed'} (PECOS associate id {owner_key}) is on {int(count)} providers in the group."))
     if shared_places:
         blocks.append(("body", "Street addresses used by more than one provider in the same group:"))
         for address, city, state_name, count in shared_places:

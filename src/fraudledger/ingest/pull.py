@@ -52,7 +52,6 @@ def pull(
     settings: Settings,
     key: str,
     url: str | None = None,
-    drop_demo: bool = False,
     focus: str | None = None,
 ) -> str:
     """Load one known source, or one custom URL already tagged with a file kind."""
@@ -77,7 +76,7 @@ def pull(
         )
     if key == "medicaid":
         chosen = resolve_file_url(settings, "medicaid", url)
-        count = ingest_medicaid(con, settings, url=chosen, drop_demo=drop_demo, focus=focus)
+        count = ingest_medicaid(con, settings, url=chosen, focus=focus)
         kept = ""
         if focus == "priority":
             kept = " Kept hospice, home health, and personal-care procedure codes."
@@ -111,7 +110,7 @@ def pull(
     raise SystemExit(f"Unknown source: {key}")
 
 
-def plan(settings: Settings, key: str, url: str | None = None, focus: str | None = None, drop_demo: bool = False) -> list:
+def plan(settings: Settings, key: str, url: str | None = None, focus: str | None = None) -> list:
     """Resolve download URLs. No database connection.
 
     A combined hospice or home-health key becomes the enrollment file, then the owner file.
@@ -129,7 +128,7 @@ def plan(settings: Settings, key: str, url: str | None = None, focus: str | None
     chosen = resolve_file_url(settings, key, url)
     options: dict = {}
     if key == "medicaid":
-        options = {"drop_demo": drop_demo, "focus": focus}
+        options = {"focus": focus}
     return [(key, chosen, options)]
 
 
@@ -148,7 +147,7 @@ def plan_working(settings: Settings) -> list:
             steps.extend(plan(settings, key))
         except SystemExit as exc:
             steps.append(("skip", str(exc), {}))
-    steps.extend(plan(settings, "medicaid", focus="priority", drop_demo=True))
+    steps.extend(plan(settings, "medicaid", focus="priority"))
     return steps
 
 
@@ -158,7 +157,6 @@ def load_local(
     key: str,
     path,
     url: str,
-    drop_demo: bool = False,
     focus: str | None = None,
 ) -> str:
     """Ingest a file that is already on disk. The caller should not be mid-download."""
@@ -169,7 +167,7 @@ def load_local(
     set_progress_label(label)
     report_progress(f"Reading {label}", None, None)
     if key == "medicaid":
-        count = ingest_medicaid(con, settings, path=local, url=url, drop_demo=drop_demo, focus=focus)
+        count = ingest_medicaid(con, settings, path=local, url=url, focus=focus)
         kept = " Kept hospice, home health, and personal-care procedure codes." if focus == "priority" else ""
         return f"Medicaid facts files in view: {count}. Source {url}.{kept}"
     if key == "leie":
@@ -196,10 +194,7 @@ def load_local(
 
 
 def pull_working(con: duckdb.DuckDBPyConnection, settings: Settings) -> str:
-    """LEIE, hospice, home health, optional NPPES, then priority Medicaid codes.
-
-    Demonstration rows are removed when the Medicaid extract loads.
-    """
+    """LEIE, hospice, home health, optional NPPES, then priority Medicaid codes."""
     parts = [
         pull(con, settings, "leie"),
         pull(con, settings, "hospice"),
@@ -214,5 +209,5 @@ def pull_working(con: duckdb.DuckDBPyConnection, settings: Settings) -> str:
             parts.append(pull(con, settings, key))
         except SystemExit as exc:
             parts.append(f"{key} skipped: {exc}")
-    parts.append(pull(con, settings, "medicaid", drop_demo=True, focus="priority"))
+    parts.append(pull(con, settings, "medicaid", focus="priority"))
     return " ".join(parts)

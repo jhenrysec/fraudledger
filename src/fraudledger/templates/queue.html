@@ -5,20 +5,10 @@
 {% if empty %}
 <section class="card">
   <h2>Load public data</h2>
-  <p>No completed run yet. The public working set downloads the OIG exclusion list, hospice and home-health enrollment files, the NPPES file when CMS has it online, and the Medicaid spending extract. Only hospice, home health, and personal-care procedure codes are kept. Demonstration rows are removed. The Medicaid download is still multi-gigabyte, and this page waits until it finishes.</p>
+  <p>No completed run yet. The public working set downloads the OIG exclusion list, hospice and home-health enrollment files, the NPPES file when CMS has it online, and the Medicaid spending extract. Only hospice, home health, and personal-care procedure codes are kept. The Medicaid download is still multi-gigabyte, and this page waits until it finishes.</p>
   <form method="post" action="/sources">
     <input type="hidden" name="mode" value="working">
     <button type="submit">Load the public working set</button>
-  </form>
-  <p class="sub">A fictional fixture is still available from <code>fraudledger demo</code>. It cannot be filed as a report.</p>
-</section>
-{% elif demo %}
-<section class="card">
-  <h2>This queue is demonstration data</h2>
-  <p>The NPIs below are fictional. They are not review leads, and a report packet will not be built from them. Load the public working set to score real hospice, home health, and personal-care billing. The Medicaid download is multi-gigabyte. The UI waits while it loads.</p>
-  <form method="post" action="/sources">
-    <input type="hidden" name="mode" value="working">
-    <button type="submit">Replace demonstration data with the public working set</button>
   </form>
 </section>
 {% endif %}

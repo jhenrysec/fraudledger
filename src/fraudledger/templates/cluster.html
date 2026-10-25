@@ -12,14 +12,14 @@
 </section>
 <section class="card">
   <h2>Shared owners</h2>
-  <p class="sub">The same associate id on at least two providers in this group. One person with several roles is still one owner.</p>
+  <p class="sub">The same PECOS associate id on at least two providers in this group. That id is CMS ASSOCIATE ID – OWNER. It is not an NPI. One person with several roles is still one owner.</p>
   {% if shared_owners %}
   <table>
     <thead><tr><th>Owner</th><th class="num">Providers in this group</th><th>Which providers</th></tr></thead>
     <tbody>
       {% for owner in shared_owners %}
       <tr>
-        <td>{{ owner.name }}<br><span class="mono">{{ owner.key }}</span></td>
+        <td>{{ owner.name }}<br><span class="mono">PECOS associate id {{ owner.key }}</span></td>
         <td class="num">{{ owner.provider_count }}</td>
         <td>{{ owner.who }}</td>
       </tr>
@@ -94,9 +94,9 @@
 </details>
 <details class="card">
   <summary>Every owner role, including owners of only one provider</summary>
-  <p class="sub">The same owner can appear once per role. Do not add the percents. <a href="/index#ownership">How to read a percent</a>.</p>
+  <p class="sub">The same owner can appear once per role. The id is the PECOS associate id, not an NPI. Do not add the percents. <a href="/index#ownership">How to read a percent</a>.</p>
   <table>
-    <thead><tr><th>Associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th></tr></thead>
+    <thead><tr><th>PECOS associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th></tr></thead>
     <tbody>
       {% for owner, name, role, percent in owners %}
       <tr>

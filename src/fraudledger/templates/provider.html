@@ -68,20 +68,16 @@
     </section>
     <section class="card">
       <h2>Report packet</h2>
-      {% if demo %}
-      <p>This run is demonstration data. A report packet is not built for fictional NPIs.</p>
-      {% else %}
       <p>Download a packet for this provider: narrative, indicator rows, billing rows, and a PDF. You file it yourself at <a href="https://america.gov/fraud">america.gov/fraud</a>. Downloading it does not submit a tip and does not compute a reward. The peer-gap figure is not an amount to report as money taken.</p>
       <p><a class="button" href="/report/{{ provider_key }}?run={{ run_id }}">Download report packet</a></p>
-      {% endif %}
     </section>
   </aside>
 </div>
 <section class="card">
   <h2>Ownership edges</h2>
-  <p class="sub">One row is one role for one owner, not one share of the company. <a href="/index#ownership">How to read the percent and the weight</a>.</p>
+  <p class="sub">One row is one role for one owner, not one share of the company. The owner id is the PECOS associate id, column ASSOCIATE ID – OWNER. It is not an NPI. <a href="/index#ownership">How to read the percent and the weight</a>.</p>
   <table>
-    <thead><tr><th>Owner id</th><th>Name</th><th>Role</th><th class="num">Percent</th><th class="num">Weight</th><th>Origin</th></tr></thead>
+    <thead><tr><th>PECOS associate id</th><th>Name</th><th>Role</th><th class="num">Percent</th><th class="num">Weight</th><th>Origin</th></tr></thead>
     <tbody>
       {% for owner, name, percent, role, weight, origin in edges %}
       <tr>

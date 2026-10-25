@@ -1,11 +1,69 @@
 from __future__ import annotations
 
+import math
+
 import duckdb
 
 from fraudledger.settings import Settings
 
 # Added on top of R11's own weight. R13 does not receive it.
 R11_BONUS = 3.0
+
+# R07 and R12 describe one year-over-year jump. Count that jump once.
+JUMP_ONCE = frozenset({"R07", "R12"})
+
+
+def unduplicated_excess(rows) -> float:
+    """Add peer-gap dollars, counting a payment jump a single time.
+
+    R12 stores the same increase as R07 on older runs. The larger of those
+    two figures is kept. Every other indicator is added on its own.
+    """
+    jump = 0.0
+    other = 0.0
+    for rule_id, excess in rows:
+        try:
+            amount = float(excess or 0)
+        except (TypeError, ValueError):
+            continue
+        if amount <= 0:
+            continue
+        if rule_id in JUMP_ONCE:
+            if amount > jump:
+                jump = amount
+        else:
+            other += amount
+    return other + jump
+
+
+def gap_by_provider(con: duckdb.DuckDBPyConnection, run_id: str) -> dict[str, float]:
+    grouped: dict[str, list] = {}
+    for key, rule_id, excess in con.execute(
+        """
+        SELECT provider_key, rule_id, excess_dollars
+        FROM flags
+        WHERE run_id = ? AND excess_dollars IS NOT NULL AND excess_dollars <> 0
+        """,
+        [run_id],
+    ).fetchall():
+        grouped.setdefault(key, []).append((rule_id, excess))
+    return {key: unduplicated_excess(items) for key, items in grouped.items()}
+
+
+def recount_cluster(score: float, stored_excess: float | None, member_keys, gaps: dict[str, float]) -> tuple[float, float]:
+    """Replace a stored group dollar total with the unduplicated one.
+
+    The sort key's dollar term is the natural log of that total. Swap the
+    term so an older run, which added a jump twice, does not keep the
+    doubled figure on the page.
+    """
+    dollars = sum(float(gaps.get(key, 0) or 0) for key in member_keys)
+    adjusted = (
+        float(score or 0)
+        - math.log1p(max(float(stored_excess or 0), 0.0))
+        + math.log1p(max(dollars, 0.0))
+    )
+    return adjusted, dollars
 
 
 def tier_for(score: float, rules: set[str], settings: Settings) -> str:
@@ -32,10 +90,9 @@ def write_scores(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
     ).fetchall()
     by_provider: dict[str, dict] = {}
     for key, rule_id, excess in flag_rows:
-        slot = by_provider.setdefault(key, {"rules": set(), "excess": 0.0})
+        slot = by_provider.setdefault(key, {"rules": set(), "rows": []})
         slot["rules"].add(rule_id)
-        if excess:
-            slot["excess"] += float(excess)
+        slot["rows"].append((rule_id, excess))
 
     mates: dict[str, set[str]] = {}
     membership = con.execute(
@@ -75,7 +132,7 @@ def write_scores(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
                 score,
                 tier_for(score, rules, settings),
                 len(rules),
-                slot["excess"],
+                unduplicated_excess(slot["rows"]),
                 ordered,
             )
         )
@@ -87,3 +144,4 @@ def write_scores(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
             """,
             records,
         )
+

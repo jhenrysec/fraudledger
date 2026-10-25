@@ -11,7 +11,7 @@ from pathlib import Path
 import duckdb
 
 from fraudledger.detect.engine import RULE_BLURB
-from fraudledger.detect.score import R11_BONUS
+from fraudledger.detect.score import R11_BONUS, unduplicated_excess
 from fraudledger.report.assemble import BANNED, DISCLAIMER, _esc
 from fraudledger.report.chart import chart_for, paid_drawing
 from fraudledger.reviews import PROVIDER_KEY
@@ -330,7 +330,7 @@ def _explain_flag(rule_id: str, metric, threshold, peer, dollars, detail: object
             _year_core(payload, threshold, dollars)
             + f" An owner was associated in {listed}. "
             "The indicator requires that association in the jump year or the year before. "
-            "The dollar increase is the same one already counted on the payment-jump indicator. "
+            "The increase is counted once, on the payment-jump indicator. It is not added again here. "
             "The association date is not proof that the owner caused the jump."
         )
     if rule_id == "R13":
@@ -375,8 +375,9 @@ def _explain_flag(rule_id: str, metric, threshold, peer, dollars, detail: object
             f"{_count(payload.get('billers') if payload.get('billers') is not None else metric)} billing NPIs "
             "that do not share an owner. "
             f"The cutoff is {_count(threshold)} billing NPIs. "
-            f"Paid through this biller: {_usd(payload.get('paid'))}. "
-            "Sharing a clinician is not, by itself, a finding that a claim was false."
+            f"Paid through this biller: {_usd(payload.get('paid'))}."
+            + _other_billers(payload)
+            + " Sharing a clinician is not, by itself, a finding that a claim was false."
         )
     if rule_id in {"R18", "R19"}:
         measure = payload.get("measure") or _TITLE.get(rule_id, rule_id)
@@ -394,6 +395,35 @@ def _explain_flag(rule_id: str, metric, threshold, peer, dollars, detail: object
     peer_text = f" Peer value {float(peer):.4g}." if peer is not None else ""
     gap = f" Peer-gap estimate {_usd(dollars)}." if dollars else ""
     return f"{blurb} Observed {metric_text}. Cutoff {threshold_text}.{peer_text}{gap}"
+
+
+def _other_billers(payload: dict) -> str:
+    others = payload.get("other_billers") or []
+    bits = []
+    for item in others:
+        if not isinstance(item, dict):
+            continue
+        label = (item.get("name") or "").strip() or "name not in the directory"
+        npi = item.get("npi") or "unknown"
+        paid = item.get("paid")
+        bit = f"{label} (NPI {npi}"
+        if paid not in (None, ""):
+            bit += f", paid {_usd(paid)}"
+        bits.append(bit + ")")
+    if not bits:
+        return ""
+    sentence = (
+        " The other billing NPIs, which do not share an owner with this biller, are "
+        + "; ".join(bits)
+        + "."
+    )
+    try:
+        omitted = int(payload.get("other_billers_omitted") or 0)
+    except (TypeError, ValueError):
+        omitted = 0
+    if omitted > 0:
+        sentence += f" {omitted} more are not listed."
+    return sentence
 
 
 def _weight_sentence(settings: Settings, rule_ids: list[str], score_value: float) -> str:
@@ -706,7 +736,9 @@ def build_packet(
         tail = " ".join(part for part in (city_state, _zip(identity[6])) if part)
         place = ", ".join(part for part in (identity[3], tail) if part)
     paid_total = float(span[2] or 0) if span else 0
-    gap_total = float(score[3] or 0) if score else 0
+    gap_total = unduplicated_excess(
+        (rule_id, dollars) for rule_id, _metric, _threshold, _peer, dollars, _detail in flags
+    )
     rule_ids = []
     if score and score[2]:
         rule_ids = [part for part in str(score[2]).split(",") if part]
@@ -721,7 +753,7 @@ def build_packet(
         dollars_line = (
             f"Paid in the loaded Medicaid extract: {_usd(paid_total)}. "
             f"Dollars above a typical peer: {_usd(gap_total)}. "
-            "That total adds each indicator's estimate, and the same dollars can be counted more than once. "
+            "A payment jump is counted once. An owner associated with that jump does not add those dollars again. "
             "It is not a loss amount and not money taken."
         )
     else:
@@ -795,8 +827,7 @@ def build_packet(
         blocks.append(("body", f"Dollars above a typical peer: {_usd(gap_total)}."))
         blocks.append((
             "body",
-            "That adds the peer-gap estimate on each indicator that carries one. "
-            "The same dollars can be included more than once when two indicators describe one jump. "
+            "That counts a payment jump once. An owner associated with that jump does not add those dollars again. "
             "For a high rate, the estimate on that indicator is (paid per line - peer median) x claim lines. "
             "It is not a loss amount, not money taken, and not a number to type on an intake form as an amount taken.",
         ))

@@ -288,6 +288,47 @@ class ApiTests(unittest.TestCase):
             self.assertIn("PECOS associate id A100", detail.text)
             self.assertEqual(client.post("/demo/remove").status_code, 404)
             self.assertNotIn("fraudster", page.text.lower())
+            con = connect(settings.db_path)
+            con.execute(
+                """
+                UPDATE providers
+                SET incorporation_date = DATE '2014-05-01'
+                WHERE provider_key = '1234567802'
+                """
+            )
+            con.execute(
+                "DELETE FROM scores WHERE run_id = 'API' AND provider_key = '1234567802'"
+            )
+            con.execute(
+                """
+                INSERT INTO scores (
+                    run_id, provider_key, score, tier, flag_count, excess_dollars, rules
+                ) VALUES ('API', '1234567802', 3, 'Elevated', 1, 2000, 'R01')
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO flags (
+                    run_id, provider_key, rule_id, metric_value, threshold,
+                    peer_value, excess_dollars, detail_json
+                ) VALUES (
+                    'API', '1234567802', 'R01', 10, 3, 3, 1000,
+                    '{"hcpcs":"T1019","rate":10,"median":3,"lines":100,"paid":1000,"peer_scope":"state","state":"AZ"}'
+                )
+                """
+            )
+            con.close()
+            provider = client.get("/provider/1234567802")
+            self.assertEqual(provider.status_code, 200)
+            self.assertIn("Incorporation date 2014-05-01", provider.text)
+            self.assertIn("not a Medicare enrollment date", provider.text)
+            self.assertIn("Paid per claim line was", provider.text)
+            self.assertIn("The score adds a weight", provider.text)
+            self.assertIn("$1,000", provider.text)
+            self.assertNotIn("$2,000", provider.text)
+            self.assertIn("counted once", provider.text)
+            self.assertNotIn("peer_scope", provider.text)
+            self.assertNotIn("metric ", provider.text.lower())
             missing = client.get("/provider/not a key")
             self.assertEqual(missing.status_code, 400)
 
@@ -613,6 +654,25 @@ class PublicReportTests(unittest.TestCase):
         self.assertIn("R01 is 3", weights)
         self.assertIn("sum to 9.0", weights)
         self.assertNotIn("fraud amount", (text + jump + weights).lower())
+        from fraudledger.detect.score import unduplicated_excess
+
+        self.assertEqual(
+            unduplicated_excess([("R07", 1000), ("R12", 1000), ("R01", 50)]),
+            1050,
+        )
+        self.assertEqual(unduplicated_excess([("R12", 400)]), 400)
+        shared = _explain_flag(
+            "R17",
+            4,
+            3,
+            None,
+            None,
+            '{"servicing_npi":"1891803037","billers":4,"paid":7761185,'
+            '"other_billers":[{"npi":"1234567893","name":"Other Biller LLC","paid":1200}]}',
+        )
+        self.assertIn("Other Biller LLC", shared)
+        self.assertIn("NPI 1234567893", shared)
+        self.assertIn("paid $1,200", shared)
 
     def test_purge_keeps_a_public_row(self) -> None:
         from fraudledger.ingest.cleanup import purge_reserved
@@ -1079,6 +1139,73 @@ class AccuracyTests(unittest.TestCase):
         self.assertIn("R14", outlier)
         self.assertNotIn("R18", mismatch)
         self.assertNotIn("R14", mismatch)
+
+    def test_shared_clinician_names_the_other_billers(self) -> None:
+        import json
+
+        from fraudledger.detect.engine import apply_rules
+        from fraudledger.detect.score import write_scores
+
+        _tmp, settings, con = self._ready()
+        path = settings.data_dir / "shared.csv"
+        path.write_text(
+            "BILLING_PROVIDER_NPI_NUM,SERVICING_PROVIDER_NPI_NUM,HCPCS_CODE,CLAIM_FROM_MONTH,TOTAL_PAID,TOTAL_CLAIM_LINES\n"
+            "6111111111,6222222222,T1019,2024-06,300000,10\n"
+            "6111111112,6222222222,T1019,2024-06,20000,1\n"
+            "6111111113,6222222222,T1019,2024-06,20000,1\n"
+            "6111111114,6222222222,T1019,2024-06,20000,1\n",
+            encoding="utf-8",
+        )
+        run_id = self._score(con, settings, path)
+        con.executemany(
+            """
+            INSERT INTO providers (provider_key, npi, name, origin)
+            VALUES (?, ?, ?, 'public')
+            """,
+            [
+                ("6111111111", "6111111111", "Alpha Billing"),
+                ("6111111112", "6111111112", "Beta Billing"),
+                ("6111111113", "6111111113", "Gamma Billing"),
+                ("6111111114", "6111111114", "Related Billing"),
+            ],
+        )
+        con.executemany(
+            """
+            INSERT INTO ownership_edges (
+                owner_key, owner_name, provider_key, percentage, role_code,
+                role_strength, edge_weight, origin
+            ) VALUES ('OWN1', 'Shared Owner', ?, 100, '34', 3, 3, 'public')
+            """,
+            [("6111111111",), ("6111111114",)],
+        )
+        apply_rules(con, settings, run_id)
+        detail = con.execute(
+            """
+            SELECT detail_json FROM flags
+            WHERE run_id = ? AND provider_key = '6111111111' AND rule_id = 'R17'
+            """,
+            [run_id],
+        ).fetchone()
+        self.assertIsNotNone(detail)
+        payload = json.loads(detail[0])
+        named = {item["npi"]: item["name"] for item in payload["other_billers"]}
+        self.assertEqual(named, {"6111111112": "Beta Billing", "6111111113": "Gamma Billing"})
+        con.execute(
+            """
+            INSERT INTO flags (
+                run_id, provider_key, rule_id, metric_value, threshold,
+                peer_value, excess_dollars, detail_json
+            ) VALUES
+                ('JUMP', '6111111111', 'R07', 3, 2, NULL, 5000, '{}'),
+                ('JUMP', '6111111111', 'R12', 3, 2, NULL, 5000, '{}'),
+                ('JUMP', '6111111111', 'R01', 4, 3, NULL, 100, '{}')
+            """
+        )
+        write_scores(con, settings, "JUMP")
+        stored = con.execute(
+            "SELECT excess_dollars FROM scores WHERE run_id = 'JUMP' AND provider_key = '6111111111'"
+        ).fetchone()[0]
+        self.assertEqual(stored, 5100)
 
 
 class ChartTests(unittest.TestCase):

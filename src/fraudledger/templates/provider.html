@@ -7,29 +7,24 @@
 <div class="grid">
   <section class="card">
     {% if score %}
-    <p><span class="badge tier-{{ score[1]|lower }}">{{ score[1] }}</span> score {{ "%.1f"|format(score[0]) }} · {{ score[4] }} rule{{ "" if score[4] == 1 else "s" }}</p>
-    <p>Rules <span class="mono">{{ score[2] }}</span></p>
-    <p>Sum of peer-gap estimates: {% if score[3] %}${{ "{:,.0f}".format(score[3]) }}{% else %}none on these rules{% endif %}.</p>
+    <p><span class="badge tier-{{ score[1]|lower }}">{{ score[1] }}</span> score {{ "%.1f"|format(score[0]) }} · {{ score[4] }} indicator{{ "" if score[4] == 1 else "s" }}</p>
+    <p>{{ weight_sentence }}</p>
+    <p>Dollars above a typical peer: {% if gap %}${{ "{:,.0f}".format(gap) }}{% else %}none{% endif %}. A payment jump is counted once. An owner associated with that jump does not add those dollars again. This is not money taken.</p>
     {% else %}
-    <p>No score in this run. The provider can still appear here from an ownership cluster.</p>
+    <p>No score in this run. The provider can still appear here from an ownership group.</p>
     {% endif %}
     <figure class="chart">
       {{ spark|safe }}
       <figcaption>{{ chart_note }}</figcaption>
     </figure>
-    <ul>
-      {% for rule_id, metric, threshold, peer, dollars, detail in flags %}
-      <li>
-        <span class="mono">{{ rule_id }}</span>
-        metric {{ "%.4g"|format(metric or 0) }}, threshold {{ "%.4g"|format(threshold or 0) }}
-        {% if peer is not none %}, peer {{ "%.4g"|format(peer) }}{% endif %}
-        {% if dollars %}, peer-gap ${{ "{:,.0f}".format(dollars) }}{% endif %}
-        <br><span class="mono">{{ detail }}</span>
-      </li>
-      {% else %}
-      <li>No rule rows for this provider in this run.</li>
-      {% endfor %}
-    </ul>
+    {% for item in indicators %}
+    <article class="indicator">
+      <h3>{{ item.heading }}</h3>
+      <p>{{ item.text }}</p>
+    </article>
+    {% else %}
+    <p>No indicator rows for this provider in this run.</p>
+    {% endfor %}
   </section>
   <aside>
     <section class="card">
@@ -37,7 +32,9 @@
       {% if identity %}
       <p>{{ identity[1] or "entity type unknown" }}{% if identity[2] %} · {{ identity[2] }}{% endif %}</p>
       <p>{{ identity[3] or "" }}<br>{{ identity[4] or "" }}{% if identity[5] %}, {{ identity[5] }}{% endif %} {{ identity[6] or "" }}</p>
-      <p>Enumeration {{ identity[7] or "unknown" }} · source {{ identity[8] or "unknown" }}</p>
+      <p>Enumeration date {{ identity[7] or "unknown" }}. This is the NPPES date.</p>
+      <p>{% if identity[8] %}Incorporation date {{ identity[8] }}. That date is not a Medicare enrollment date.{% else %}No incorporation date was loaded. When it is missing, an organization-date indicator uses the enumeration date instead.{% endif %}</p>
+      <p>Source {{ identity[9] or "unknown" }}</p>
       {% else %}
       <p>No directory row. The NPI is known only from billing facts.</p>
       {% endif %}

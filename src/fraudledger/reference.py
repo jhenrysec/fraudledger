@@ -222,7 +222,8 @@ def explain_cluster(
             f"Added peer-gap estimates: ${dollars:,.0f}. "
             "Each figure is a gap versus a peer median. The peer group is the provider's state when that state has enough billers of the code. Otherwise it is national. "
             "The usual formula is (rate - median) x claim lines. "
-            "Adding them is not the amount paid, and it is not a loss amount."
+            "Adding them is not the amount paid, and it is not a loss amount. "
+            "A payment jump is counted once. An owner associated with that jump does not add those dollars again."
         )
     else:
         gap_sentence = "The indicators in this group do not carry a dollar peer gap."

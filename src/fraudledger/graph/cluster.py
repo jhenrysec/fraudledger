@@ -6,6 +6,7 @@ import duckdb
 import networkx as nx
 from networkx.algorithms.community import louvain_communities
 
+from fraudledger.detect.score import gap_by_provider
 from fraudledger.settings import Settings
 
 
@@ -63,18 +64,7 @@ def build_communities(con: duckdb.DuckDBPyConnection, settings: Settings, run_id
             [run_id],
         ).fetchall()
     }
-    excess = {
-        row[0]: float(row[1] or 0)
-        for row in con.execute(
-            """
-            SELECT provider_key, SUM(excess_dollars)
-            FROM flags
-            WHERE run_id = ? AND excess_dollars IS NOT NULL
-            GROUP BY 1
-            """,
-            [run_id],
-        ).fetchall()
-    }
+    excess = gap_by_provider(con, run_id)
     r11 = {
         row[0]
         for row in con.execute(

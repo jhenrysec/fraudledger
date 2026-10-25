@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 
 import duckdb
 
+from fraudledger.detect.score import unduplicated_excess
 from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.hashing import sha256_file, sha256_text
 from fraudledger.graph.links import shared_links
@@ -130,8 +131,15 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
             writer.writerows(detail_rows)
         display = str(name or key)
         place = ", ".join(part for part in (city, state) if part)
+        present = {row[0] for row in flags}
+        gap = unduplicated_excess((row[0], row[4]) for row in flags)
+        visible = []
+        for rule_id, metric, threshold, peer, dollars, detail in flags:
+            if rule_id == "R12" and "R07" in present:
+                dollars = None
+            visible.append((rule_id, metric, threshold, peer, dollars, detail))
         text_parts.append("")
-        text_parts.append(_finding_block(display, key, score, tier, rules, excess or 0, flags))
+        text_parts.append(_finding_block(display, key, score, tier, rules, gap, visible))
         rows_html = "".join(
             "<li><code>{}</code> metric {}, threshold {}{}</li>".format(
                 _esc(rule_id),
@@ -139,7 +147,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
                 f"{float(threshold):.4g}" if threshold is not None else "n/a",
                 f", peer-gap ${float(dollars):,.0f}" if dollars else "",
             )
-            for rule_id, metric, threshold, _peer, dollars, _detail in flags
+            for rule_id, metric, threshold, _peer, dollars, _detail in visible
         )
         html_findings.append(
             f"""
@@ -149,7 +157,7 @@ def write_report(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str
                 <h3>{_esc(display)}</h3>
                 <p class="meta">{_esc(key)} · {_esc(place)} · score {float(score or 0):.1f}</p>
               </header>
-              <p>Rules: {_esc(rules or "")}. Peer-gap estimate ${float(excess or 0):,.0f}.</p>
+              <p>Rules: {_esc(rules or "")}. Peer-gap estimate ${gap:,.0f}.</p>
               {chart["svg"]}
               <p class="meta">{_esc(chart["note"])}</p>
               <ul>{rows_html}</ul>

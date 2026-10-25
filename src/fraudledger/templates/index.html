@@ -47,7 +47,7 @@
   </table>
   <p>R11 is the billing NPI on the OIG exclusion list with a payment on or after the exclusion date. Its own weight is already in the sum. The extra {{ "%.1f"|format(index.r11_extra) }} is added only for R11. With the default R11 weight of 5, that extra alone reaches the Critical cutoff. R13 is a separate owner name-and-state match. It does not get that extra, and it is not Critical by itself.</p>
   <p>The cluster bonus is not “this provider has an owner.” It applies only when two or more flagged providers sit in the same ownership community, and that community has at most {{ index.cluster_bonus_max }} providers. A larger community does not add the bonus. The <a href="#groups">group sort key</a> on the Groups page is a different number. A value in the hundreds there is not a provider score.</p>
-  <p>For a cost outlier, the peer-gap shown beside the score is <span class="mono">(paid per line − peer median) × claim lines</span>. The peer group is that provider’s state when at least {{ index.min_peer_n }} providers in the state billed the code. Otherwise it is national. It is not a loss amount and not an amount to type on an intake form.</p>
+  <p>For a cost outlier, the peer-gap shown beside the score is <span class="mono">(paid per line − peer median) × claim lines</span>. The peer group is that provider’s state when at least {{ index.min_peer_n }} providers in the state billed the code. Otherwise it is national. It is not a loss amount and not an amount to type on an intake form. A payment jump is counted once. The owner indicator for that same jump does not add the dollars again.</p>
 </section>
 
 <section class="card" id="groups">

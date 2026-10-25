@@ -15,17 +15,24 @@ from fastapi.templating import Jinja2Templates
 from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
+from fraudledger.detect.score import gap_by_provider, recount_cluster, unduplicated_excess
 from fraudledger.graph.links import shared_links, summarize
 from fraudledger.ingest.cleanup import purge_reserved
 from fraudledger.reference import explain_cluster, reader_index
 from fraudledger.report.assemble import DISCLAIMER
 from fraudledger.report.chart import chart_for
+from fraudledger.report.packet import _explain_flag, _heading_for, _weight_sentence
 from fraudledger.reviews import ALLOWED_STATES, PROVIDER_KEY, set_review
 from fraudledger.settings import Settings, load_settings
 
 RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _LOCK = threading.Lock()
 _REQUEST: ContextVar[Request | None] = ContextVar("fraudledger_request", default=None)
+
+
+def _shown_group(header, members: dict, gaps: dict) -> dict:
+    score, dollars = recount_cluster(header[4], header[5], members.get(header[0], []), gaps)
+    return explain_cluster(header[1], header[2], header[3], score, dollars)
 
 
 def _percent(value: object) -> int | None:
@@ -171,6 +178,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [run_row[0]],
             ).fetchall()
+            gaps = gap_by_provider(connection, run_row[0])
+            rows = [(*row[:7], gaps.get(row[0], 0.0), row[8], row[9]) for row in rows]
             return templates.TemplateResponse(
                 request,
                 "queue.html",
@@ -188,7 +197,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             run_row = resolve_run(connection, run)
             identity = connection.execute(
                 """
-                SELECT name, entity_type, taxonomy, address, city, state, zip, enumeration_date, origin
+                SELECT name, entity_type, taxonomy, address, city, state, zip,
+                       enumeration_date, incorporation_date, origin
                 FROM providers WHERE provider_key = ?
                 """,
                 [provider_key],
@@ -209,6 +219,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [run_row[0], provider_key],
             ).fetchall()
+            indicators = [
+                {
+                    "heading": _heading_for(rule_id, detail),
+                    "text": _explain_flag(rule_id, metric, threshold, peer, dollars, detail),
+                }
+                for rule_id, metric, threshold, peer, dollars, detail in flags
+            ]
+            rule_ids = [part for part in str(score[2]).split(",") if part] if score and score[2] else []
+            weight_sentence = _weight_sentence(settings, rule_ids, float(score[0])) if score else ""
+            gap = unduplicated_excess(
+                (rule_id, dollars) for rule_id, _metric, _threshold, _peer, dollars, _detail in flags
+            )
             monthly = connection.execute(
                 """
                 SELECT month, SUM(paid), string_agg(DISTINCT upper(trim(hcpcs)), ',')
@@ -257,7 +279,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     provider_key=provider_key,
                     identity=identity,
                     score=score,
-                    flags=flags,
+                    weight_sentence=weight_sentence,
+                    gap=gap,
+                    indicators=indicators,
                     spark=chart["svg"],
                     chart_note=chart["note"],
                     edges=edges,
@@ -282,6 +306,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [run_row[0]],
             ).fetchall()
+            gaps = gap_by_provider(connection, run_row[0])
+            member_rows = connection.execute(
+                "SELECT cluster_id, provider_key FROM cluster_members WHERE run_id = ?",
+                [run_row[0]],
+            ).fetchall()
+            members: dict[int, list[str]] = {}
+            for cluster_id, key in member_rows:
+                members.setdefault(cluster_id, []).append(key)
             links = shared_links(connection, run_row[0])
             groups = []
             for row in rows:
@@ -290,7 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 groups.append(
                     {
                         "id": row[0],
-                        **explain_cluster(*row[1:]),
+                        **_shown_group(row, members, gaps),
                         "brief": brief,
                         "more": more,
                     }
@@ -340,6 +372,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchall()
             flagged_members = [row for row in members if row[5] is not None]
             quiet_members = [row for row in members if row[5] is None]
+            gaps = gap_by_provider(connection, run_row[0])
+            group = _shown_group(
+                header,
+                {header[0]: [row[0] for row in members]},
+                gaps,
+            )
             shared = shared_links(connection, run_row[0]).get(
                 header[0],
                 {"owners": [], "addresses": []},
@@ -352,7 +390,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     connection,
                     run_row,
                     group_id=header[0],
-                    group=explain_cluster(*header[1:]),
+                    group=group,
                     flagged_members=flagged_members,
                     quiet_members=quiet_members,
                     owners=owners,

@@ -25,12 +25,12 @@ RULE_BLURB = {
     "R09": "The first year of billing is large, and an incorporation date or an NPPES enumeration date says the organization is new. A missing date is not treated as new.",
     "R10": "Lifetime paid in this extract is very large and the organization, or the NPI when no incorporation date is present, is on or after the configured date.",
     "R11": "The billing NPI is on the OIG LEIE and payments appear on or after the exclusion date.",
-    "R12": "Paid jumped by more than the billing-swing thresholds and a qualifying owner was associated in the latest year or the year before.",
+    "R12": "Paid jumped by more than the billing-swing thresholds and a qualifying owner was associated in the latest year or the year before. The dollar increase is the one on the payment-jump indicator. It is not added again.",
     "R13": "A qualifying owner matches the LEIE on exact first name, last name, and state. A middle name is also required when both sides have one. A reinstated person is not flagged. The agency name is not compared.",
     "R14": "Medicare hospice service days divided by stays are more than the configured multiple of the provider median. The certification number is matched with the enrollment state when both files have a state.",
     "R15": "Medicare home health visits per episode are more than the configured multiple of the provider median.",
     "R16": "A servicing NPI, not the billing NPI, is on the OIG LEIE and payments appear on or after the exclusion date.",
-    "R17": "The same servicing NPI is paid through several billing NPIs that do not share an owner.",
+    "R17": "The same servicing NPI is paid through several billing NPIs that do not share an owner. The other billing NPIs are named on the indicator.",
     "R18": "Medicare Care Compare early or late live discharges are more than the configured multiple of the hospice median.",
     "R19": "Medicare Care Compare potentially preventable readmissions are more than the configured multiple of the home-health median.",
 }
@@ -483,7 +483,7 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
                     growth,
                     swing_ratio,
                     prior_paid,
-                    change,
+                    None,
                     json.dumps({"rule": "R12", **detail, "owner_years": sorted(owner_years.get(key, set()))}),
                 )
             )
@@ -814,32 +814,79 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
               AND length(servicing_npi) = 10
               AND servicing_npi <> billing_npi
             GROUP BY 1, 2
+        ),
+        links AS (
+            SELECT a.billing_npi,
+                   a.servicing_npi,
+                   a.paid AS paid,
+                   b.billing_npi AS other_npi,
+                   b.paid AS other_paid
+            FROM pairs a
+            JOIN pairs b
+              ON a.servicing_npi = b.servicing_npi
+             AND a.billing_npi <> b.billing_npi
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM ownership_edges left_owner
+                JOIN ownership_edges right_owner ON left_owner.owner_key = right_owner.owner_key
+                WHERE left_owner.provider_key = a.billing_npi
+                  AND right_owner.provider_key = b.billing_npi
+            )
         )
-        SELECT a.billing_npi,
-               a.servicing_npi,
-               COUNT(DISTINCT b.billing_npi) + 1 AS billers,
-               SUM(DISTINCT a.paid) AS paid
-        FROM pairs a
-        JOIN pairs b
-          ON a.servicing_npi = b.servicing_npi
-         AND a.billing_npi <> b.billing_npi
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM ownership_edges left_owner
-            JOIN ownership_edges right_owner ON left_owner.owner_key = right_owner.owner_key
-            WHERE left_owner.provider_key = a.billing_npi
-              AND right_owner.provider_key = b.billing_npi
-        )
+        SELECT billing_npi,
+               servicing_npi,
+               COUNT(DISTINCT other_npi) + 1 AS billers,
+               MAX(paid) AS paid,
+               string_agg(DISTINCT other_npi || ':' || CAST(other_paid AS VARCHAR), chr(31))
+        FROM links
         GROUP BY 1, 2
-        HAVING COUNT(DISTINCT b.billing_npi) + 1 >= ?
-           AND SUM(DISTINCT a.paid) >= ?
+        HAVING COUNT(DISTINCT other_npi) + 1 >= ?
+           AND MAX(paid) >= ?
         """,
         [min_billers, r17_paid],
     ).fetchall()
-    _insert(
-        con,
-        run_id,
-        [
+    other_keys = sorted(
+        {
+            part.split(":", 1)[0]
+            for _key, _servicing, _billers, _paid, blob in scattered
+            for part in (blob or "").split("\x1f")
+            if part
+        }
+    )
+    other_names: dict[str, str | None] = {}
+    if other_keys:
+        placeholders = ", ".join("?" for _ in other_keys)
+        other_names = {
+            key: name
+            for key, name in con.execute(
+                f"SELECT provider_key, name FROM providers WHERE provider_key IN ({placeholders})",
+                other_keys,
+            ).fetchall()
+        }
+    r17_rows = []
+    listed_cap = 25
+    for key, servicing, billers, paid, blob in scattered:
+        others = []
+        for part in (blob or "").split("\x1f"):
+            if not part or ":" not in part:
+                continue
+            npi, paid_text = part.split(":", 1)
+            try:
+                other_paid = float(paid_text)
+            except ValueError:
+                other_paid = None
+            others.append((npi, other_paid))
+        others.sort(key=lambda item: item[0])
+        omitted = max(0, len(others) - listed_cap)
+        shown = [
+            {
+                "npi": npi,
+                "name": (other_names.get(npi) or None),
+                "paid": other_paid,
+            }
+            for npi, other_paid in others[:listed_cap]
+        ]
+        r17_rows.append(
             (
                 key,
                 "R17",
@@ -847,11 +894,19 @@ def apply_rules(con: duckdb.DuckDBPyConnection, settings: Settings, run_id: str)
                 min_billers,
                 None,
                 None,
-                json.dumps({"rule": "R17", "servicing_npi": servicing, "billers": billers, "paid": paid}),
+                json.dumps(
+                    {
+                        "rule": "R17",
+                        "servicing_npi": servicing,
+                        "billers": billers,
+                        "paid": paid,
+                        "other_billers": shown,
+                        "other_billers_omitted": omitted,
+                    }
+                ),
             )
-            for key, servicing, billers, paid in scattered
-        ],
-    )
+        )
+    _insert(con, run_id, r17_rows)
 
     def _care_peer(setting: str, measures: tuple[str, ...], multiple: float, peers: int, rule_id: str) -> None:
         placeholders = ", ".join("?" for _ in measures)

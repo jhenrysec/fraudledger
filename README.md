@@ -71,7 +71,7 @@ fraudledger report 1234567890 --run 20261021T120000Z
 
 The Medicaid extract is a Parquet file of about 3 GB. The loader recognizes it by its file header, including when the saved name does not end in `.parquet`. A completed download is reused when its size still matches the server, so a failed read does not make you download it again.
 
-`fraudledger report` writes `exports/<run>-<provider>.zip` with `narrative.txt`, `evidence.csv`, `indicators.csv`, `how-to-submit.txt`, and `report.pdf`. The PDF opens with the bottom line, then the dollar figures (paid in the extract, and dollars above a typical peer), then the monthly chart with the peer median, then a plain-language explanation of each indicator. You attach the PDF yourself at [america.gov/fraud](https://america.gov/fraud). The command does not contact the government. Do not type the peer-gap figure into the form as money taken.
+`fraudledger report` writes `exports/<run>-<provider>.zip` with `narrative.txt`, `evidence.csv`, `indicators.csv`, `how-to-submit.txt`, and `report.pdf`. The PDF opens with the bottom line, then the dollar figures (paid in the extract, and dollars above a typical peer), then the monthly chart with the peer median, then a plain-language explanation of each indicator. The provider page uses that same text, including how the score is added up, the incorporation date, and the other billing NPIs on a shared-clinician indicator. A payment jump is counted once. You attach the PDF yourself at [america.gov/fraud](https://america.gov/fraud). The command does not contact the government. Do not type the peer-gap figure into the form as money taken.
 
 `fraudledger sources` lists the known public files. `pull` looks up the current download for that file. `pull --url` uses an address you paste, and `--as` says how to read it (`medicaid`, `leie`, `nppes`, `hospice-owners`, `hospice-enrollments`, `home-health-owners`, `home-health-enrollments`). `--focus priority` keeps hospice, home health, and personal-care procedure codes from a Medicaid file. The same choices are on the Sources page at `http://127.0.0.1:8088/sources`.
 
@@ -119,12 +119,12 @@ Thresholds live in the YAML config and the hash of that file is stored on the ru
 | R09 | First-year paid at least $1M and a real incorporation or enumeration date says the organization is new |
 | R10 | Incorporation, or enumeration when incorporation is missing, on or after 2022-01-01 and lifetime paid at least $5M |
 | R11 | Billing NPI is on the LEIE and paid amounts fall on or after the exclusion date |
-| R12 | A payment jump with a qualifying owner associated in that year or the year before |
+| R12 | A payment jump with a qualifying owner associated in that year or the year before. The dollar increase is the one on R07 and is not added again |
 | R13 | Owner matches the LEIE on first name, last name, and state. Middle name must agree when both sides have one. A reinstated person is not flagged |
 | R14 | Medicare hospice days per stay above 2× the provider median, CCN plus state when both files have a state |
 | R15 | Medicare home health visits per episode above 2× the provider median |
 | R16 | A servicing NPI other than the biller is on the LEIE, with payment on or after the exclusion date |
-| R17 | The same servicing NPI is paid through at least 3 billing NPIs that do not share an owner, and at least $250k |
+| R17 | The same servicing NPI is paid through at least 3 billing NPIs that do not share an owner, and at least $250k. The other billing NPIs are named |
 | R18 | Care Compare early or late live discharges above 2× the hospice median, at least 8 peers |
 | R19 | Care Compare potentially preventable readmissions above 2× the home-health median, at least 8 peers |
 

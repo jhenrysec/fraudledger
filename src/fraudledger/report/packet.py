@@ -827,7 +827,6 @@ def build_packet(
         ("small", f"NPI {provider_key}  |  run {run_id}"),
         ("body", "Review lead from public data. Not a finding that a crime occurred. This file was not sent to any agency."),
         ("heading", "What raised your concern"),
-        ("body", "Paste the next paragraph into that box. It names the provider, the months, the amounts, where the records came from, and what is still unknown."),
         ("body", provider_concern(
             name,
             provider_key,

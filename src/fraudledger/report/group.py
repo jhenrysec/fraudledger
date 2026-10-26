@@ -221,7 +221,6 @@ def build_group_packet(
         ("small", f"Run {run_id}  |  {len(members)} providers"),
         ("body", "Review lead from public data. Not a finding that a crime occurred. This file was not sent to any agency."),
         ("heading", "What raised your concern"),
-        ("body", "Paste the next paragraph into that box. It names the group, the link, the amounts, where the records came from, and what is still unknown."),
         ("body", group_concern(
             cluster_id,
             len(members),

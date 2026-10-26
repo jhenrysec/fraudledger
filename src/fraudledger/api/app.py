@@ -542,6 +542,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
         return FileResponse(path, filename=path.name, media_type="application/zip")
 
+    @app.get("/group/{cluster_id}/report")
+    def group_report(cluster_id: int, run: str | None = None):
+        from fraudledger.report.group import build_group_packet
+
+        def write(connection):
+            run_row = resolve_run(connection, run)
+            try:
+                return build_group_packet(connection, settings, run_row[0], cluster_id)
+            except SystemExit as exc:
+                text = str(exc)
+                lowered = text.lower()
+                status = 404 if "no group" in lowered or "no run" in lowered else 400
+                raise HTTPException(status, text) from exc
+
+        path = call(write)
+        return FileResponse(path, filename=path.name, media_type="application/zip")
+
     @app.get("/report/{provider_key}")
     def report_packet(provider_key: str, run: str | None = None):
         if not PROVIDER_KEY.match(provider_key):

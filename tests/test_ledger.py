@@ -773,6 +773,101 @@ class PublicReportTests(unittest.TestCase):
             self.assertIn("A shared owner is not the direct link", joined)
             con.close()
 
+    def test_group_packet_covers_every_provider(self) -> None:
+        import zipfile
+
+        from fraudledger.db import refresh_facts_view
+        from fraudledger.report.group import build_group_packet
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            con = connect(settings.db_path)
+            refresh_facts_view(con, settings.data_dir / "parquet" / "facts")
+            con.execute(
+                """
+                INSERT INTO runs (run_id, started_at, status, demo_only)
+                VALUES ('LINK', current_timestamp, 'succeeded', false)
+                """
+            )
+            con.executemany(
+                """
+                INSERT INTO providers (
+                    provider_key, npi, name, entity_type, address, city, state, zip, origin
+                ) VALUES (?, ?, ?, 'organization', ?, ?, ?, '11234', 'public')
+                """,
+                [
+                    ("1770513145", "1770513145", "AMERICARE CERTIFIED SPECIAL SERVICES, INC.", "5923 STRICKLAND AVE", "BROOKLYN", "NY"),
+                    ("1888888881", "1888888881", "Other Agency", "10 OTHER ST", "BROOKLYN", "NY"),
+                ],
+            )
+            con.executemany(
+                """
+                INSERT INTO ownership_edges (
+                    owner_key, owner_name, provider_key, percentage, role_code,
+                    role_strength, edge_weight, origin
+                ) VALUES ('0941370241', 'DAVID HELFGOTT', ?, NULL, '40', 1, 1, 'public:hospice-owners')
+                """,
+                [("1770513145",), ("1888888881",)],
+            )
+            con.executemany(
+                "INSERT INTO cluster_members (run_id, cluster_id, provider_key) VALUES ('LINK', 593, ?)",
+                [("1770513145",), ("1888888881",)],
+            )
+            con.execute(
+                """
+                INSERT INTO clusters (
+                    run_id, cluster_id, provider_count, owner_count, flagged_count, score, excess_dollars
+                ) VALUES ('LINK', 593, 2, 1, 1, 1, 0)
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO scores (
+                    run_id, provider_key, score, tier, flag_count, excess_dollars, rules
+                ) VALUES ('LINK', '1770513145', 3, 'Elevated', 1, 0, 'R01')
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO flags (
+                    run_id, provider_key, rule_id, metric_value, threshold, peer_value, excess_dollars, detail_json
+                ) VALUES (
+                    'LINK', '1770513145', 'R01', 20, 10, 5, 100,
+                    '{"hcpcs":"T1019","family_label":"personal care"}'
+                )
+                """
+            )
+            dest = build_group_packet(con, settings, "LINK", 593)
+            with zipfile.ZipFile(dest) as archive:
+                names = set(archive.namelist())
+                narrative = archive.read("narrative.txt").decode("utf-8")
+                members_csv = archive.read("members.csv").decode("utf-8")
+                owners_csv = archive.read("owners.csv").decode("utf-8")
+                pdf = archive.read("report.pdf")
+            self.assertEqual(
+                names,
+                {"narrative.txt", "members.csv", "owners.csv", "indicators.csv", "report.pdf"},
+            )
+            self.assertIn("This one file covers every provider in the group", narrative)
+            self.assertIn("AMERICARE CERTIFIED SPECIAL SERVICES, INC.", narrative)
+            self.assertIn("Other Agency", narrative)
+            self.assertIn("DAVID HELFGOTT (PECOS associate id 0941370241) is on 2 providers", narrative)
+            self.assertIn("officer (CMS role 40)", narrative)
+            self.assertIn("No street address is used by two providers", narrative)
+            self.assertIn("also on Other Agency (NPI 1888888881)", narrative)
+            self.assertIn("Providers with no billing indicator", narrative)
+            self.assertNotIn("How to file this", narrative)
+            self.assertIn("1770513145", members_csv)
+            self.assertIn("1888888881", members_csv)
+            self.assertIn("0941370241", owners_csv)
+            self.assertTrue(pdf.startswith(b"%PDF"))
+            lowered = narrative.lower()
+            from fraudledger.report.assemble import BANNED
+            for phrase in BANNED:
+                self.assertNotIn(phrase, lowered)
+            con.close()
+
     def test_purge_keeps_a_public_row(self) -> None:
         from fraudledger.ingest.cleanup import purge_reserved
         from fraudledger.ingest.public import ingest_medicaid

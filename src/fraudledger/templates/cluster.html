@@ -9,6 +9,8 @@
   <p>The names below are the owners and street addresses on more than one provider in this group. That is the link. {{ group.owners }} owners are attached in total; an owner of only one provider is not repeated here.</p>
   <p>{{ group.gap_sentence }}</p>
   <p>The provider score in the table is the one to use. 8 or more is Critical, 5 is High, and 3 is Elevated. Providers with an indicator are listed first.</p>
+  <p><a class="button" href="/group/{{ group_id }}/report?run={{ run_id }}">Download group report</a></p>
+  <p class="sub">One file for every provider in this group: the shared owners, the shared addresses, a section for each provider with a billing indicator, and the address and owners of every other provider. Downloading it does not submit a tip and does not change the review state.</p>
 </section>
 <section class="card">
   <h2>Shared owners</h2>

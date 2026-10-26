@@ -47,6 +47,7 @@
       <p>
         {% for cid in clusters %}
         <a href="/cluster/{{ cid }}?run={{ run_id }}">Open group {{ cid }}</a>
+        · <a href="/group/{{ cid }}/report?run={{ run_id }}">Download the group report</a>
         {% endfor %}
       </p>
       {% endif %}

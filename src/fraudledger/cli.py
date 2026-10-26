@@ -258,8 +258,6 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    from fraudledger.report.packet import build_packet
-
     settings, con = _open(args)
     try:
         run_id = args.run_id
@@ -275,13 +273,22 @@ def _cmd_report(args: argparse.Namespace) -> int:
             if row is None:
                 raise SystemExit("No succeeded public run. Load the public working set first.")
             run_id = row[0]
-        dest = build_packet(con, settings, run_id, args.provider_key)
-        set_review(
-            con,
-            args.provider_key,
-            "exported",
-            "Report packet saved on this machine. It was not submitted.",
-        )
+        if args.group_id is not None:
+            from fraudledger.report.group import build_group_packet
+
+            dest = build_group_packet(con, settings, run_id, args.group_id)
+        else:
+            if not args.provider_key:
+                raise SystemExit("Give a provider NPI, or pass --group with the group number.")
+            from fraudledger.report.packet import build_packet
+
+            dest = build_packet(con, settings, run_id, args.provider_key)
+            set_review(
+                con,
+                args.provider_key,
+                "exported",
+                "Report packet saved on this machine. It was not submitted.",
+            )
     finally:
         con.close()
     print(dest)
@@ -381,8 +388,9 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--out")
     export.set_defaults(func=_cmd_export)
 
-    report = sub.add_parser("report", help="Write one provider's report packet. Does not submit it.")
-    report.add_argument("provider_key")
+    report = sub.add_parser("report", help="Write one provider packet, or one packet for a whole group.")
+    report.add_argument("provider_key", nargs="?")
+    report.add_argument("--group", dest="group_id", type=int, help="Group number. Writes one packet for every provider in it.")
     report.add_argument("--run", dest="run_id")
     report.set_defaults(func=_cmd_report)
 

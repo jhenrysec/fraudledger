@@ -540,17 +540,19 @@ def _write_pdf(path: Path, blocks: list[tuple[str, str]], drawing) -> None:
             index += 1
             continue
         if kind == "chart":
-            if drawing is not None:
+            pictured = drawing.get(text) if isinstance(drawing, dict) else drawing
+            if pictured is not None:
                 story.append(Spacer(1, 4))
-                story.append(drawing)
+                story.append(pictured)
                 story.append(Spacer(1, 2))
             index += 1
             continue
         if kind == "heading" and index + 1 < len(blocks) and blocks[index + 1][0] == "chart":
             grouped = [flow(kind, text)]
             index += 2
-            if drawing is not None:
-                grouped.extend((Spacer(1, 4), drawing, Spacer(1, 2)))
+            pictured = drawing.get(blocks[index - 1][1]) if isinstance(drawing, dict) else drawing
+            if pictured is not None:
+                grouped.extend((Spacer(1, 4), pictured, Spacer(1, 2)))
             if index < len(blocks) and blocks[index][0] == "body":
                 grouped.append(flow("body", blocks[index][1]))
                 index += 1

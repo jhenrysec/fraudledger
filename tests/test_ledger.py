@@ -602,6 +602,10 @@ class PublicReportTests(unittest.TestCase):
                 {"narrative.txt", "evidence.csv", "indicators.csv", "how-to-submit.txt", "report.pdf"},
             )
             self.assertIn("What raised your concern", narrative)
+            self.assertIn("Provider, facility, care setting, benefit program, or service", narrative)
+            self.assertIn("Risk to patients, beneficiaries, or the public", narrative)
+            self.assertIn("National Provider Identifier", narrative)
+            self.assertIn("I cannot confirm", narrative)
             self.assertNotIn("Paste the next paragraph", narrative)
             self.assertIn("I read the public Medicaid Provider Spending extract", narrative)
             self.assertIn("1234567893", narrative)
@@ -853,6 +857,10 @@ class PublicReportTests(unittest.TestCase):
                 {"narrative.txt", "members.csv", "owners.csv", "indicators.csv", "report.pdf"},
             )
             self.assertIn("What raised your concern", narrative)
+            self.assertIn("Provider, facility, care setting, benefit program, or service", narrative)
+            self.assertIn("Risk to patients, beneficiaries, or the public", narrative)
+            self.assertIn("National Provider Identifier", narrative)
+            self.assertIn("I cannot confirm", narrative)
             self.assertNotIn("Paste the next paragraph", narrative)
             self.assertIn("I read the public Medicaid Provider Spending extract", narrative)
             self.assertIn("Ownership group 593", narrative)

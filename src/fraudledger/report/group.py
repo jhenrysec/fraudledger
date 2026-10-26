@@ -18,11 +18,15 @@ from fraudledger.report.packet import (
     _month,
     _owner_lines,
     _reject,
+    _service_phrase,
     _usd,
     _weight_sentence,
     _write_pdf,
     _zip,
+    _RISK,
     group_concern,
+    group_details,
+    group_risk,
 )
 from fraudledger.reference import role_label
 from fraudledger.settings import Settings
@@ -215,6 +219,17 @@ def build_group_packet(
         )
         if gap
     ]
+    flagged_bits = [f"{names[member[0]]} (NPI {member[0]})" for member in flagged]
+    risk_hits = []
+    for member in flagged:
+        pieces = [
+            _RISK[row[0]]
+            for row in by_flag.get(member[0], [])
+            if row[0] in _RISK
+        ]
+        if pieces:
+            risk_hits.append(f"{names[member[0]]} (NPI {member[0]}): " + "; ".join(pieces[:3]) + ".")
+    service_flags = [row for rows in by_flag.values() for row in rows]
 
     blocks: list[tuple[str, str]] = [
         ("title", f"Group {cluster_id}"),
@@ -230,9 +245,13 @@ def build_group_packet(
             address_line,
             leaders,
         )),
+        ("heading", "Provider, facility, care setting, benefit program, or service"),
+        ("body", group_details(flagged_bits, _service_phrase(service_flags))),
+        ("heading", "Risk to patients, beneficiaries, or the public"),
+        ("body", group_risk(risk_hits)),
         ("body", "This one file covers every provider in the group. You do not need a separate report for each provider to show how they are connected."),
         ("heading", "How to read this file"),
-        ("body", "Read it in this order. The first paragraph answers the form. Then the bottom line for the whole group. Then the owners and street addresses that link the providers. Then the list of every provider. Then a full section for each provider that has a billing indicator, including its own dollars and its own chart. Last, the providers with no billing indicator, with the address and the owners CMS recorded, so the organization is complete."),
+        ("body", "Read it in this order. The opening paragraphs answer the form. Then the bottom line for the whole group. Then the owners and street addresses that link the providers. Then the list of every provider. Then a full section for each provider that has a billing indicator, including its own dollars and its own chart. Last, the providers with no billing indicator, with the address and the owners CMS recorded, so the organization is complete."),
         ("heading", "Bottom line up front"),
         ("body", (
             f"Group {cluster_id} has {len(members)} providers. "

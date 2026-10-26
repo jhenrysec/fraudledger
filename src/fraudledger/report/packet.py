@@ -231,6 +231,154 @@ def group_concern(
     )
 
 
+_RISK = {
+    "R03": "claim lines per patient are above the cap",
+    "R11": "the billing NPI is on the OIG exclusion list and a payment falls on or after the exclusion date",
+    "R13": "an owner matches the exclusion list on name and state",
+    "R14": "Medicare hospice stays are long relative to other hospices",
+    "R15": "Medicare home-health visits per episode are high relative to other agencies",
+    "R16": "a servicing NPI, not the billing NPI, is on the exclusion list",
+    "R17": "one servicing NPI is paid through several billing NPIs",
+    "R18": "Medicare live discharges are high relative to other hospices",
+    "R19": "Medicare home-health readmissions are high relative to other home-health agencies",
+}
+_MEDICARE = {"R14", "R15", "R18", "R19"}
+
+
+def _service_phrase(flags: list) -> str:
+    found: list[str] = []
+    for _rule_id, _metric, _threshold, _peer, _dollars, detail in flags:
+        payload = _as_dict(detail)
+        code = str(payload.get("hcpcs") or "").strip()
+        family = str(payload.get("family_label") or "").strip()
+        if code and family:
+            bit = f"{code} ({family})"
+        elif code:
+            bit = code
+        elif family:
+            bit = family
+        else:
+            continue
+        if bit not in found:
+            found.append(bit)
+    if not found:
+        return "The procedure codes that stood out are listed in the indicator sections below."
+    shown = found[:6]
+    extra = len(found) - len(shown)
+    text = ", ".join(shown)
+    if extra:
+        text += f", and {extra} more"
+    return f"The procedure codes that stood out are {text}."
+
+
+def provider_details(
+    name: str,
+    provider_key: str,
+    place: str,
+    entity: object,
+    taxonomy: object,
+    enumerated: object,
+    formed: object,
+    rule_ids: list[str],
+    service_line: str,
+) -> str:
+    kind = str(entity).strip() if entity else ""
+    if kind.isalpha() and kind == kind.lower():
+        kind = kind[:1].upper() + kind[1:]
+    entity_line = (
+        f"NPPES lists the entity type as {kind}."
+        if kind
+        else "NPPES entity type was not loaded."
+    )
+    if taxonomy:
+        specialty = f"The NPPES taxonomy code is {taxonomy}. That is the specialty code on the NPPES row, not a finding."
+    else:
+        specialty = "No NPPES taxonomy code was loaded, so I cannot name a specialty from that file."
+    if place:
+        where = f"The directory address is {place}."
+    else:
+        where = "No street address was loaded, so I cannot name a facility location."
+    if enumerated:
+        issued = f"The NPPES enumeration date, the date the NPI was issued, is {enumerated}."
+    else:
+        issued = "The NPPES enumeration date was not loaded."
+    if formed:
+        formed_line = (
+            f"The incorporation date in the enrollment file is {formed}. "
+            "That date is not a Medicare enrollment date."
+        )
+    else:
+        formed_line = "No incorporation date was loaded."
+    if _MEDICARE.intersection(rule_ids):
+        program = (
+            "The paid rows are Medicaid. "
+            "A later section also uses a Medicare hospice or home-health comparison. "
+            "That comparison is not the Medicaid paid amount."
+        )
+    else:
+        program = "The benefit program in the paid rows is Medicaid. I do not have a separate care-setting record beyond the address and the taxonomy code."
+    return (
+        f"The provider is {name}. The National Provider Identifier is {provider_key}. "
+        f"{where} {entity_line} {specialty} {issued} {formed_line} {program} {service_line}"
+    )
+
+
+def provider_risk(rule_ids: list[str]) -> str:
+    hits = [_RISK[rule_id] for rule_id in rule_ids if rule_id in _RISK]
+    if hits:
+        shown = "; ".join(hits[:4])
+        extra = len(hits) - min(len(hits), 4)
+        more = f" {extra} more comparisons of this kind are later in this file." if extra else ""
+        return (
+            "I cannot confirm that a patient, a beneficiary, or the public was harmed. "
+            "I do not have a patient record, a beneficiary complaint, or a clinical review. "
+            f"The public comparisons that relate to people, rather than only to a paid amount, are: {shown}.{more} "
+            "I do not know whether anyone was hurt or put at risk."
+        )
+    return (
+        "I cannot confirm that a patient, a beneficiary, or the public was harmed, or that anyone is likely to be harmed. "
+        "The records I read are billing comparisons and ownership records. "
+        "They do not name a patient, show an injury, or show that a service failed. "
+        "I have no clinical record and no beneficiary complaint."
+    )
+
+
+def group_details(flagged_bits: list[str], service_line: str) -> str:
+    if not flagged_bits:
+        who = "No provider in the group had a billing comparison that stood out."
+    else:
+        shown = flagged_bits[:8]
+        extra = len(flagged_bits) - len(shown)
+        who = "The National Provider Identifiers with a billing comparison are " + "; ".join(shown)
+        if extra:
+            who += f"; and {extra} more listed later in this file"
+        who += "."
+    return (
+        "Each provider in this group is named below with its National Provider Identifier. "
+        f"{who} "
+        "The benefit program in the paid rows is Medicaid. "
+        "The directory address and the NPPES taxonomy code for each provider are in that provider's section. "
+        "I do not have a separate facility or care-setting record beyond those addresses and codes. "
+        f"{service_line}"
+    )
+
+
+def group_risk(hits: list[str]) -> str:
+    if not hits:
+        return provider_risk([])
+    shown = hits[:4]
+    extra = len(hits) - len(shown)
+    more = f" {extra} more providers have a comparison of this kind later in this file." if extra else ""
+    return (
+        "I cannot confirm that a patient, a beneficiary, or the public was harmed. "
+        "I do not have a patient record, a beneficiary complaint, or a clinical review. "
+        "The public comparisons in this group that relate to people, rather than only to a paid amount, are: "
+        + " ".join(shown)
+        + more
+        + " I do not know whether anyone was hurt or put at risk."
+    )
+
+
 def _heading_for(rule_id: str, detail: object) -> str:
     payload = _as_dict(detail)
     if rule_id == "R01" and payload.get("hcpcs"):
@@ -839,6 +987,20 @@ def build_packet(
             int(span[4] or 0) if span else 0,
             rule_ids,
         )),
+        ("heading", "Provider, facility, care setting, benefit program, or service"),
+        ("body", provider_details(
+            name,
+            provider_key,
+            place,
+            identity[1] if identity else None,
+            identity[2] if identity else None,
+            identity[7] if identity else None,
+            identity[8] if identity else None,
+            rule_ids,
+            _service_phrase(flags),
+        )),
+        ("heading", "Risk to patients, beneficiaries, or the public"),
+        ("body", provider_risk(rule_ids)),
     ]
     if identity:
         kind = identity[1] or "not loaded"

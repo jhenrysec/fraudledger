@@ -30,18 +30,23 @@
     <section class="card">
       <h2>Identity</h2>
       {% if identity %}
-      <p>{{ identity[1] or "entity type unknown" }}{% if identity[2] %} · {{ identity[2] }}{% endif %}</p>
-      <p>{{ identity[3] or "" }}<br>{{ identity[4] or "" }}{% if identity[5] %}, {{ identity[5] }}{% endif %} {{ identity[6] or "" }}</p>
-      <p>Enumeration date {{ identity[7] or "unknown" }}. This is the NPPES date.</p>
-      <p>{% if identity[8] %}Incorporation date {{ identity[8] }}. That date is not a Medicare enrollment date.{% else %}No incorporation date was loaded. When it is missing, an organization-date indicator uses the enumeration date instead.{% endif %}</p>
+      <p>NPPES entity type: {{ identity[1] or "not loaded" }}{% if identity[2] %}. NPPES taxonomy {{ identity[2] }}. That is the specialty code, not a finding{% endif %}.</p>
+      <p>Directory address:<br>{{ identity[3] or "No street address was loaded" }}<br>{{ identity[4] or "" }}{% if identity[5] %}, {{ identity[5] }}{% endif %} {{ identity[6] or "" }}</p>
+      <p>NPPES enumeration date: {{ identity[7] or "not loaded" }}. That is the date the NPI was issued, not an incorporation date.</p>
+      <p>{% if identity[8] %}Incorporation date: {{ identity[8] }}. That date is from the enrollment file. It is not a Medicare enrollment date.{% else %}Incorporation date: not loaded. When it is missing, an organization-date indicator uses the enumeration date instead.{% endif %}</p>
       <p>Source file: {{ identity[9]|origin_label }}</p>
       {% else %}
       <p>No directory row. The NPI is known only from billing facts.</p>
       {% endif %}
+      {% if link_lines %}
+      {% for line in link_lines %}
+      <p>{{ line }}</p>
+      {% endfor %}
+      {% endif %}
       {% if clusters %}
-      <p>Ownership groups
+      <p>
         {% for cid in clusters %}
-        <a href="/cluster/{{ cid }}?run={{ run_id }}">Group {{ cid }}</a>
+        <a href="/cluster/{{ cid }}?run={{ run_id }}">Open group {{ cid }}</a>
         {% endfor %}
       </p>
       {% endif %}

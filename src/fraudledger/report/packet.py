@@ -14,6 +14,7 @@ from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.detect.score import R11_BONUS, unduplicated_excess
 from fraudledger.report.assemble import BANNED, DISCLAIMER, _esc
 from fraudledger.report.chart import chart_for, paid_drawing
+from fraudledger.graph.links import explain_membership
 from fraudledger.reference import role_label
 from fraudledger.reviews import PROVIDER_KEY
 from fraudledger.settings import Settings
@@ -471,7 +472,7 @@ def _owner_lines(edges: list) -> list[str]:
         if key not in grouped:
             order.append(key)
             grouped[key] = {"name": (owner_name or "").strip(), "roles": []}
-        shown = "no percent" if percent is None else f"{float(percent):g}%"
+        shown = "CMS stored no percent on this row" if percent is None else f"{float(percent):g}%"
         grouped[key]["roles"].append(f"{role_label(role)} at {shown}")
     lines = []
     for key in order:
@@ -686,49 +687,6 @@ def build_packet(
         [provider_key],
     ).fetchall()
     chart = chart_for(con, settings, provider_key, identity[5] if identity else None, monthly)
-    shared_owners = con.execute(
-        """
-        SELECT e.owner_key, MAX(e.owner_name), COUNT(DISTINCT e.provider_key)
-        FROM ownership_edges e
-        JOIN cluster_members m ON m.provider_key = e.provider_key AND m.run_id = ?
-        WHERE m.cluster_id IN (
-            SELECT cluster_id FROM cluster_members WHERE run_id = ? AND provider_key = ?
-        )
-        GROUP BY e.owner_key
-        HAVING COUNT(DISTINCT e.provider_key) >= 2
-        ORDER BY 3 DESC, 1
-        LIMIT 12
-        """,
-        [run_id, run_id, provider_key],
-    ).fetchall()
-    shared_places = con.execute(
-        """
-        SELECT p.address, p.city, p.state, COUNT(DISTINCT m.provider_key)
-        FROM cluster_members m
-        JOIN providers p ON p.provider_key = m.provider_key
-        WHERE m.run_id = ?
-          AND m.cluster_id IN (
-              SELECT cluster_id FROM cluster_members WHERE run_id = ? AND provider_key = ?
-          )
-          AND p.address IS NOT NULL AND trim(p.address) <> ''
-          AND upper(p.address) NOT LIKE '%PO BOX%'
-          AND upper(p.address) NOT LIKE '%P.O. BOX%'
-          AND upper(p.address) NOT LIKE '%POST OFFICE BOX%'
-        GROUP BY 1, 2, 3
-        HAVING COUNT(DISTINCT m.provider_key) >= 2
-        ORDER BY 4 DESC
-        LIMIT 8
-        """,
-        [run_id, run_id, provider_key],
-    ).fetchall()
-    groups = con.execute(
-        """
-        SELECT cluster_id FROM cluster_members
-        WHERE run_id = ? AND provider_key = ?
-        ORDER BY 1
-        """,
-        [run_id, provider_key],
-    ).fetchall()
 
     name = (identity[0] if identity and identity[0] else "") or provider_key
     place = ""
@@ -769,21 +727,25 @@ def build_packet(
         ("body", "Review lead from public data. Not a finding that a crime occurred. This file was not sent to any agency."),
     ]
     if identity:
-        kind = identity[1] or "Entity type unknown"
+        kind = identity[1] or "not loaded"
         if kind.isalpha() and kind == kind.lower():
             kind = kind[:1].upper() + kind[1:]
         formed = identity[8]
         enumerated = identity[7]
         blocks.append((
             "body",
-            f"{kind}"
-            + (f", taxonomy {identity[2]}" if identity[2] else "")
-            + (f". {place}." if place else ".")
-            + f" Enumeration date {enumerated or 'unknown'}."
+            f"NPPES entity type: {kind}."
+            + (f" NPPES taxonomy {identity[2]}. That is the specialty code, not a finding." if identity[2] else "")
+            + (f" Directory address: {place}." if place else " No street address was loaded for this provider.")
             + (
-                f" Incorporation date {formed}. That date is not a Medicare enrollment date."
+                f" NPPES enumeration date: {enumerated}. That is the date the NPI was issued, not an incorporation date."
+                if enumerated
+                else " NPPES enumeration date: not loaded."
+            )
+            + (
+                f" Incorporation date: {formed}. That date is from the enrollment file. It is not a Medicare enrollment date."
                 if formed
-                else " No incorporation date was loaded."
+                else " Incorporation date: not loaded."
             ),
         ))
     blocks.append(("heading", "Bottom line up front"))
@@ -854,28 +816,32 @@ def build_packet(
         blocks.append(("heading", _heading_for(rule_id, detail)))
         blocks.append(("body", _explain_flag(rule_id, metric, threshold, peer, dollars, detail)))
     blocks.append(("heading", "Ownership"))
-    if groups:
-        labels = ", ".join(str(int(row[0])) for row in groups)
-        blocks.append((
-            "body",
-            f"This provider is in group {labels}. "
-            "A group is a set of providers that share an owner or a street address. "
-            "The group number is a label, not a rank and not a severity score.",
-        ))
-    else:
-        blocks.append(("body", "This provider is not in an ownership group in this run."))
+    link_rows = [
+        (owner_key, owner_name, role, percent)
+        for owner_key, owner_name, role, percent, _weight, _origin in edges
+    ]
+    for line in explain_membership(
+        con,
+        run_id,
+        provider_key,
+        identity[3] if identity else None,
+        identity[4] if identity else None,
+        identity[5] if identity else None,
+        link_rows,
+        settings.address_link_max,
+    ):
+        blocks.append(("body", line))
     blocks.append((
         "body",
-        "An ownership line is one person or company. The id in parentheses is the PECOS associate id, "
-        "column ASSOCIATE ID - OWNER in the CMS owner file. It is not an NPI. "
-        "The words after the colon are the relationship CMS recorded for that owner on this provider. "
+        "Each line below is one person or company on this provider. "
+        "The id in parentheses is the PECOS associate id, column ASSOCIATE ID - OWNER in the CMS owner file. It is not an NPI. "
+        "The words after the colon are the relationship CMS recorded. "
         "Direct owner (CMS role 34) means equity in this provider. Count each associate once. "
         "Those direct-owner percents should generally come to about 100 percent. "
-        "Indirect owner (CMS role 35) means equity in a company that owns this provider. "
-        "Do not add that percent on top of the direct owner. "
+        "Indirect owner (CMS role 35) means equity in a company that owns this provider. Do not add that percent on top of the direct owner. "
         "Officer (CMS role 40), director (CMS role 41), and managing employee are control relationships. "
-        "Medicare requires those even when the same person is already listed as an owner, "
-        "and the percent on those rows is usually the same stake again. "
+        "Medicare requires those even when the same person is already listed as an owner, and the percent on those rows is usually the same stake again. "
+        "CMS stored no percent means the percent cell was blank. It does not mean zero. "
         "Several relationships for the same id are one owner, not several shares.",
     ))
     owner_lines = _owner_lines(edges)
@@ -886,15 +852,6 @@ def build_packet(
         blocks.extend(("body", line) for line in shown)
         if len(owner_lines) > len(shown):
             blocks.append(("body", f"{len(owner_lines) - len(shown)} more owners are in the database and are not listed here."))
-    if shared_owners:
-        blocks.append(("body", "Owners also listed on another provider in the same ownership group:"))
-        for owner_key, owner_name, count in shared_owners:
-            blocks.append(("body", f"{owner_name or 'Unnamed'} (PECOS associate id {owner_key}) is on {int(count)} providers in the group."))
-    if shared_places:
-        blocks.append(("body", "Street addresses used by more than one provider in the same group:"))
-        for address, city, state_name, count in shared_places:
-            place_line = ", ".join(part for part in (address, city, state_name) if part)
-            blocks.append(("body", f"{place_line} is on {int(count)} providers in the group."))
     blocks.append(("heading", "Exclusion list"))
     if not leie:
         blocks.append(("body", "No exclusion-list row was loaded for this billing NPI."))

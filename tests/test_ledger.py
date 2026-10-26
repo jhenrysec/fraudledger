@@ -320,7 +320,7 @@ class ApiTests(unittest.TestCase):
             con.close()
             provider = client.get("/provider/1234567802")
             self.assertEqual(provider.status_code, 200)
-            self.assertIn("Incorporation date 2014-05-01", provider.text)
+            self.assertIn("Incorporation date: 2014-05-01", provider.text)
             self.assertIn("not a Medicare enrollment date", provider.text)
             self.assertIn("Paid per claim line was", provider.text)
             self.assertIn("The score adds a weight", provider.text)
@@ -626,6 +626,11 @@ class PublicReportTests(unittest.TestCase):
             lines,
             ["EXTENDED CHHA ACQUISITION, LLC (PECOS associate id 7911382882): direct owner (CMS role 34) at 100%."],
         )
+        blank = _owner_lines(
+            [("0941370241", "DAVID HELFGOTT", "40", None, 1, "public:hospice-owners")]
+        )
+        self.assertIn("CMS stored no percent on this row", blank[0])
+        self.assertIn("officer (CMS role 40)", blank[0])
         from fraudledger.report.packet import _explain_flag, _weight_sentence
 
         text = _explain_flag(
@@ -675,6 +680,96 @@ class PublicReportTests(unittest.TestCase):
         self.assertIn("Other Biller LLC", shared)
         self.assertIn("NPI 1234567893", shared)
         self.assertIn("paid $1,200", shared)
+
+    def test_packet_names_the_link_and_the_address(self) -> None:
+        import zipfile
+
+        from fraudledger.db import refresh_facts_view
+        from fraudledger.graph.links import explain_membership
+        from fraudledger.report.packet import build_packet
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = load_settings(data_dir=tmp)
+            settings.ensure_dirs()
+            con = connect(settings.db_path)
+            refresh_facts_view(con, settings.data_dir / "parquet" / "facts")
+            con.execute(
+                """
+                INSERT INTO runs (run_id, started_at, status, demo_only)
+                VALUES ('LINK', current_timestamp, 'succeeded', false)
+                """
+            )
+            con.executemany(
+                """
+                INSERT INTO providers (
+                    provider_key, npi, name, entity_type, address, city, state, zip, origin
+                ) VALUES (?, ?, ?, 'organization', ?, ?, ?, '11234', 'public')
+                """,
+                [
+                    ("1770513145", "1770513145", "AMERICARE CERTIFIED SPECIAL SERVICES, INC.", "5923 STRICKLAND AVE", "BROOKLYN", "NY"),
+                    ("1888888881", "1888888881", "Other Agency", "10 OTHER ST", "BROOKLYN", "NY"),
+                    ("1990000001", "1990000001", "Alpha House", "1 SHARED WAY", "AUSTIN", "TX"),
+                    ("1990000002", "1990000002", "Beta House", "1 SHARED WAY", "AUSTIN", "TX"),
+                    ("1990000003", "1990000003", "Gamma House", "1 SHARED WAY", "AUSTIN", "TX"),
+                ],
+            )
+            con.executemany(
+                """
+                INSERT INTO ownership_edges (
+                    owner_key, owner_name, provider_key, percentage, role_code,
+                    role_strength, edge_weight, origin
+                ) VALUES (?, 'DAVID HELFGOTT', ?, NULL, '40', 1, 1, 'public:hospice-owners')
+                """,
+                [("0941370241", "1770513145"), ("0941370241", "1888888881")],
+            )
+            con.executemany(
+                """
+                INSERT INTO cluster_members (run_id, cluster_id, provider_key)
+                VALUES ('LINK', ?, ?)
+                """,
+                [(593, "1770513145"), (593, "1888888881"), (7, "1990000001"), (7, "1990000002"), (7, "1990000003")],
+            )
+            con.execute(
+                """
+                INSERT INTO clusters (
+                    run_id, cluster_id, provider_count, owner_count, flagged_count, score, excess_dollars
+                ) VALUES ('LINK', 593, 2, 1, 0, 1, 0), ('LINK', 7, 3, 0, 0, 1, 0)
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO scores (
+                    run_id, provider_key, score, tier, flag_count, excess_dollars, rules
+                ) VALUES ('LINK', '1770513145', 1, 'Monitor', 0, 0, '')
+                """
+            )
+            dest = build_packet(con, settings, "LINK", "1770513145")
+            with zipfile.ZipFile(dest) as archive:
+                narrative = archive.read("narrative.txt").decode("utf-8")
+            self.assertIn("Directory address: 5923 STRICKLAND AVE, BROOKLYN, NY", narrative)
+            self.assertIn("No other provider in this group uses that street address", narrative)
+            self.assertIn("not why this provider is in the group", narrative)
+            self.assertIn("DAVID HELFGOTT (PECOS associate id 0941370241)", narrative)
+            self.assertIn("officer (CMS role 40)", narrative)
+            self.assertIn("Other Agency (NPI 1888888881)", narrative)
+            self.assertIn("CMS stored no percent", narrative)
+            self.assertNotIn("share an owner or a street address", narrative)
+            address_lines = explain_membership(
+                con,
+                "LINK",
+                "1990000001",
+                "1 SHARED WAY",
+                "AUSTIN",
+                "TX",
+                [],
+                settings.address_link_max,
+            )
+            joined = " ".join(address_lines)
+            self.assertIn("Beta House (NPI 1990000002)", joined)
+            self.assertIn("Gamma House (NPI 1990000003)", joined)
+            self.assertIn("This address meets that rule, so it is a link", joined)
+            self.assertIn("A shared owner is not the direct link", joined)
+            con.close()
 
     def test_purge_keeps_a_public_row(self) -> None:
         from fraudledger.ingest.cleanup import purge_reserved

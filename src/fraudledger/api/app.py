@@ -16,7 +16,7 @@ from fraudledger import __version__
 from fraudledger.db import connect, refresh_facts_view
 from fraudledger.detect.engine import RULE_BLURB
 from fraudledger.detect.score import gap_by_provider, recount_cluster, unduplicated_excess
-from fraudledger.graph.links import shared_links, summarize
+from fraudledger.graph.links import explain_membership, shared_links, summarize
 from fraudledger.ingest.cleanup import purge_reserved
 from fraudledger.reference import explain_cluster, origin_label, reader_index, role_label
 from fraudledger.report.assemble import DISCLAIMER
@@ -259,6 +259,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 [provider_key],
             ).fetchall()
+            link_lines = explain_membership(
+                connection,
+                run_row[0],
+                provider_key,
+                identity[3] if identity else None,
+                identity[4] if identity else None,
+                identity[5] if identity else None,
+                [(owner, name, role, percent) for owner, name, percent, role, _weight, _origin in edges],
+                settings.address_link_max,
+            )
             clusters = connection.execute(
                 """
                 SELECT cluster_id FROM cluster_members
@@ -287,6 +297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     spark=chart["svg"],
                     chart_note=chart["note"],
                     edges=edges,
+                    link_lines=link_lines,
                     clusters=[row[0] for row in clusters],
                     review=review,
                     states=ALLOWED_STATES,

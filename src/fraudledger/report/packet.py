@@ -132,6 +132,105 @@ _CLAUSE = {
 }
 
 
+def _concern_clauses(rule_ids: list[str]) -> str:
+    clauses = [_CLAUSE[rule_id] for rule_id in rule_ids if rule_id in _CLAUSE]
+    if not clauses:
+        return "No billing comparison stood out in this run."
+    shown = clauses[:4]
+    text = "; ".join(shown)
+    extra = len(clauses) - len(shown)
+    if extra:
+        text += f"; and {extra} more comparison{'s' if extra != 1 else ''} described later in this file"
+    return text
+
+
+def provider_concern(
+    name: str,
+    provider_key: str,
+    place: str,
+    formed: object,
+    paid: float,
+    gap: float,
+    start: object,
+    end: object,
+    rows: int,
+    rule_ids: list[str],
+) -> str:
+    """A few sentences that answer the intake question, in the reader's voice."""
+    who = f"{name} (NPI {provider_key})"
+    if place:
+        who += f", {place}"
+    if rows:
+        billing = (
+            f"The Medicaid Provider Spending extract shows {_usd(paid)} paid "
+            f"from {_month(start)} through {_month(end)} "
+            "on the procedure codes kept in this file."
+        )
+    else:
+        billing = "No billing rows for this NPI were in the extract I read."
+    if gap:
+        dollars = f"The gap versus a typical peer is about {_usd(gap)}."
+    else:
+        dollars = "There is no dollar gap versus a typical peer in this file."
+    formed_line = ""
+    if formed:
+        formed_line = (
+            f" The incorporation date in the enrollment file is {formed}. "
+            "That date is not a Medicare enrollment date."
+        )
+    return (
+        "I read the public Medicaid Provider Spending extract and the CMS provider files. "
+        "I did not see invoices or medical records. "
+        f"{who}. {billing} "
+        f"What stood out is that {_concern_clauses(rule_ids)}. "
+        f"{dollars}{formed_line} "
+        "I am not sure the services were delivered or were appropriate. "
+        "The peer gap is not an amount I can say was taken."
+    )
+
+
+def group_concern(
+    cluster_id: int,
+    providers: int,
+    flagged: int,
+    gap: float,
+    owners: list[str],
+    address_line: str,
+    leaders: list[str],
+) -> str:
+    if owners:
+        shown = owners[:3]
+        link = "They are linked by " + "; ".join(shown)
+        extra = len(owners) - len(shown)
+        if extra:
+            link += f"; and {extra} more shared owner{'s' if extra != 1 else ''}"
+        link += "."
+    else:
+        link = "No PECOS associate id is on more than one provider in the group."
+    if leaders:
+        lead = "The largest gaps versus a typical peer are " + "; ".join(leaders[:3]) + "."
+    elif flagged:
+        lead = "None of those comparisons carry a dollar gap."
+    else:
+        lead = "No provider in the group had a billing comparison that stood out."
+    if gap:
+        dollars = (
+            f"Added across the providers, the gap versus a typical peer is about {_usd(gap)}. "
+            "That total is not one payment and not an amount I can say was taken."
+        )
+    else:
+        dollars = "There is no dollar gap versus a typical peer to add across the group."
+    return (
+        "I read the public Medicaid Provider Spending extract and the CMS owner file. "
+        "I did not see invoices or medical records. "
+        f"Ownership group {cluster_id} has {providers} providers. "
+        f"{flagged} have a comparison that stood out. "
+        f"{link} {address_line} {lead} {dollars} "
+        "I am not sure the services were delivered or were appropriate. "
+        "This file lists every provider in the group."
+    )
+
+
 def _heading_for(rule_id: str, detail: object) -> str:
     payload = _as_dict(detail)
     if rule_id == "R01" and payload.get("hcpcs"):
@@ -727,6 +826,20 @@ def build_packet(
         ("title", f"{name}"),
         ("small", f"NPI {provider_key}  |  run {run_id}"),
         ("body", "Review lead from public data. Not a finding that a crime occurred. This file was not sent to any agency."),
+        ("heading", "What raised your concern"),
+        ("body", "Paste the next paragraph into that box. It names the provider, the months, the amounts, where the records came from, and what is still unknown."),
+        ("body", provider_concern(
+            name,
+            provider_key,
+            place,
+            identity[8] if identity else None,
+            paid_total,
+            gap_total,
+            span[0] if span else None,
+            span[1] if span else None,
+            int(span[4] or 0) if span else 0,
+            rule_ids,
+        )),
     ]
     if identity:
         kind = identity[1] or "not loaded"

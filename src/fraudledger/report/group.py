@@ -22,6 +22,7 @@ from fraudledger.report.packet import (
     _weight_sentence,
     _write_pdf,
     _zip,
+    group_concern,
 )
 from fraudledger.reference import role_label
 from fraudledger.settings import Settings
@@ -186,14 +187,53 @@ def build_group_packet(
     combined = sum(gaps.values())
     flagged = [row for row in members if row[10] is not None]
     quiet = [row for row in members if row[10] is None]
+    owner_bits = [
+        f"{owners[key]['name'] or 'Unnamed owner'} (PECOS associate id {key})"
+        for key in sorted(shared_owner_keys, key=lambda key: (-len(owners[key]["providers"]), owners[key]["name"] or key))
+    ]
+    place_counts: dict[tuple, int] = {}
+    place_label: dict[tuple, str] = {}
+    for member in members:
+        street = (member[4] or "").strip()
+        if not street:
+            continue
+        key = (street.upper(), (member[5] or "").strip().upper(), (member[6] or "").strip().upper())
+        place_counts[key] = place_counts.get(key, 0) + 1
+        place_label.setdefault(key, _place(street, member[5], member[6], ""))
+    shared_labels = [place_label[key] for key, count in place_counts.items() if count >= 2]
+    if not shared_labels:
+        address_line = "No two providers in the group use the same street address."
+    elif len(shared_labels) == 1:
+        address_line = f"A shared directory address is {shared_labels[0]}."
+    else:
+        address_line = f"Shared directory addresses include {shared_labels[0]} and {len(shared_labels) - 1} more."
+    leaders = [
+        f"{names[member[0]]} (NPI {member[0]}) at about {_usd(gap)}"
+        for gap, member in sorted(
+            ((gaps.get(member[0]) or 0, member) for member in flagged),
+            key=lambda item: -item[0],
+        )
+        if gap
+    ]
 
     blocks: list[tuple[str, str]] = [
         ("title", f"Group {cluster_id}"),
         ("small", f"Run {run_id}  |  {len(members)} providers"),
         ("body", "Review lead from public data. Not a finding that a crime occurred. This file was not sent to any agency."),
+        ("heading", "What raised your concern"),
+        ("body", "Paste the next paragraph into that box. It names the group, the link, the amounts, where the records came from, and what is still unknown."),
+        ("body", group_concern(
+            cluster_id,
+            len(members),
+            len(flagged),
+            combined,
+            owner_bits,
+            address_line,
+            leaders,
+        )),
         ("body", "This one file covers every provider in the group. You do not need a separate report for each provider to show how they are connected."),
         ("heading", "How to read this file"),
-        ("body", "Read it in this order. First, the bottom line for the whole group. Second, the owners and street addresses that link the providers. Third, the list of every provider. Fourth, a full section for each provider that has a billing indicator, including its own dollars and its own chart. Last, the providers with no billing indicator, with the address and the owners CMS recorded, so the organization is complete."),
+        ("body", "Read it in this order. The first paragraph answers the form. Then the bottom line for the whole group. Then the owners and street addresses that link the providers. Then the list of every provider. Then a full section for each provider that has a billing indicator, including its own dollars and its own chart. Last, the providers with no billing indicator, with the address and the owners CMS recorded, so the organization is complete."),
         ("heading", "Bottom line up front"),
         ("body", (
             f"Group {cluster_id} has {len(members)} providers. "

@@ -601,6 +601,8 @@ class PublicReportTests(unittest.TestCase):
                 names,
                 {"narrative.txt", "evidence.csv", "indicators.csv", "how-to-submit.txt", "report.pdf"},
             )
+            self.assertIn("What raised your concern", narrative)
+            self.assertIn("I read the public Medicaid Provider Spending extract", narrative)
             self.assertIn("1234567893", narrative)
             self.assertNotIn("How to file this", narrative)
             self.assertNotIn("https://america.gov/fraud", narrative)
@@ -849,6 +851,9 @@ class PublicReportTests(unittest.TestCase):
                 names,
                 {"narrative.txt", "members.csv", "owners.csv", "indicators.csv", "report.pdf"},
             )
+            self.assertIn("What raised your concern", narrative)
+            self.assertIn("I read the public Medicaid Provider Spending extract", narrative)
+            self.assertIn("Ownership group 593", narrative)
             self.assertIn("This one file covers every provider in the group", narrative)
             self.assertIn("AMERICARE CERTIFIED SPECIAL SERVICES, INC.", narrative)
             self.assertIn("Other Agency", narrative)

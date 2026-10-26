@@ -871,10 +871,6 @@ def build_packet(
     for source_id, url, retrieved, digest, nbytes in snapshots:
         blocks.append(("small", f"{source_id} retrieved {retrieved}. {nbytes} bytes. SHA-256 {digest}. {url}"))
     blocks.append(("body", DISCLAIMER))
-    blocks.append(("heading", "How to file this"))
-    blocks.append(("body", f"Open {INTAKE} and file it yourself if you decide it is worth sending. This program does not file it and does not compute a reward."))
-    blocks.append(("body", "Attach report.pdf. If the form asks for an amount, do not type the peer-gap estimate as money taken. Leave the amount blank or say the attachment shows a gap versus a peer median."))
-    blocks.append(("body", "The Criminal Tip Rewards Pilot is discretionary."))
 
     narrative = []
     for kind, text in blocks:

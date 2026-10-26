@@ -602,7 +602,9 @@ class PublicReportTests(unittest.TestCase):
                 {"narrative.txt", "evidence.csv", "indicators.csv", "how-to-submit.txt", "report.pdf"},
             )
             self.assertIn("1234567893", narrative)
-            self.assertIn("https://america.gov/fraud", narrative)
+            self.assertNotIn("How to file this", narrative)
+            self.assertNotIn("https://america.gov/fraud", narrative)
+            self.assertIn("https://america.gov/fraud", submit)
             self.assertIn("Bottom line up front", narrative)
             self.assertIn("What the data indicates", narrative)
             self.assertIn("Dollar figures", narrative)
